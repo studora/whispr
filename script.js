@@ -1,8 +1,8 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-app.js";
 import { getAuth, signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-auth.js";
-import { getFirestore, collection, addDoc, query, orderBy, onSnapshot, serverTimestamp, setDoc, doc, where } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore.js";
+import { getFirestore, collection, addDoc, query, orderBy, onSnapshot, serverTimestamp, setDoc, doc } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore.js";
 
-// --- 1. PASTE YOUR FIREBASE CONFIG HERE ---
+// --- 1. YOUR CONFIGURATION ---
 const firebaseConfig = {
   apiKey: "AIzaSyDKTmbeR8vxWOimsera1WmC6a5mZc_Ewkc",
   authDomain: "closeddoor-58ac5.firebaseapp.com",
@@ -41,11 +41,19 @@ loginBtn.addEventListener('click', async () => {
     try {
         await signInWithPopup(auth, provider);
     } catch (error) {
-        console.error("Login failed", error);
+        console.error("Login Error:", error);
+        if (error.code === 'auth/unauthorized-domain') {
+            alert("Error: Domain not authorized. Go to Firebase Console > Auth > Settings > Authorized Domains.");
+        } else {
+            alert("Login Failed. Check console for details. (Turn off AdBlocker!)");
+        }
     }
 });
 
-logoutBtn.addEventListener('click', () => signOut(auth));
+logoutBtn.addEventListener('click', () => {
+    signOut(auth);
+    location.reload();
+});
 
 onAuthStateChanged(auth, async (user) => {
     if (user) {
@@ -53,18 +61,21 @@ onAuthStateChanged(auth, async (user) => {
         loginScreen.classList.add('hidden');
         appScreen.classList.remove('hidden');
         
-        // Set My Profile UI
         document.getElementById('my-avatar').src = user.photoURL;
         document.getElementById('my-name').textContent = user.displayName.split(' ')[0];
 
-        // Save User to Firestore (so others can see me)
-        await setDoc(doc(db, "users", user.uid), {
-            uid: user.uid,
-            displayName: user.displayName,
-            photoURL: user.photoURL,
-            email: user.email,
-            lastActive: serverTimestamp()
-        });
+        // Save User to DB
+        try {
+            await setDoc(doc(db, "users", user.uid), {
+                uid: user.uid,
+                displayName: user.displayName,
+                photoURL: user.photoURL,
+                email: user.email,
+                lastActive: serverTimestamp()
+            }, { merge: true });
+        } catch (e) {
+            console.error("Database Error (Check AdBlocker):", e);
+        }
 
         loadUsers();
     } else {
@@ -74,14 +85,13 @@ onAuthStateChanged(auth, async (user) => {
     }
 });
 
-// --- LOAD USER LIST ---
+// --- LOAD USERS ---
 function loadUsers() {
     const q = query(collection(db, "users"));
     onSnapshot(q, (snapshot) => {
         userListEl.innerHTML = '';
         snapshot.forEach((doc) => {
             const user = doc.data();
-            // Don't show myself in the list
             if (user.uid !== currentUser.uid) {
                 const div = document.createElement('div');
                 div.className = 'user-item';
@@ -89,42 +99,35 @@ function loadUsers() {
                     <img src="${user.photoURL}" class="user-avatar">
                     <div class="user-info">
                         <h4>${user.displayName}</h4>
-                        <p>Click to chat</p>
+                        <p>Secure Connection</p>
                     </div>
                 `;
                 div.addEventListener('click', () => selectChat(user));
                 userListEl.appendChild(div);
             }
         });
+    }, (error) => {
+        console.error("Error loading users (Check AdBlocker):", error);
     });
 }
 
-// --- SELECT CHAT ---
+// --- CHAT LOGIC ---
 function selectChat(user) {
     selectedUser = user;
     
-    // Update UI
     emptyState.classList.add('hidden');
     chatInterface.classList.remove('hidden');
     document.getElementById('header-avatar').src = user.photoURL;
     document.getElementById('header-name').textContent = user.displayName;
     
-    // Generate Unique Chat ID (Alphabetical Sort ensures ID is same for both users)
-    const chatId = getChatId(currentUser.uid, selectedUser.uid);
-
+    // Alphabetical Sort ID
+    const chatId = [currentUser.uid, selectedUser.uid].sort().join("_");
     loadMessages(chatId);
 }
 
-function getChatId(uid1, uid2) {
-    return [uid1, uid2].sort().join("_");
-}
-
-// --- MESSAGING LOGIC ---
 function loadMessages(chatId) {
-    // Unsubscribe from previous listener if exists
     if (messagesUnsubscribe) messagesUnsubscribe();
-
-    msgContainer.innerHTML = ''; // Clear old messages
+    msgContainer.innerHTML = ''; 
 
     const q = query(
         collection(db, "chats", chatId, "messages"), 
@@ -134,8 +137,7 @@ function loadMessages(chatId) {
     messagesUnsubscribe = onSnapshot(q, (snapshot) => {
         msgContainer.innerHTML = '';
         snapshot.forEach((doc) => {
-            const msg = doc.data();
-            renderMessage(msg);
+            renderMessage(doc.data());
         });
         scrollToBottom();
     });
@@ -146,37 +148,34 @@ function renderMessage(msg) {
     const isMe = msg.senderId === currentUser.uid;
     div.className = `message ${isMe ? 'sent' : 'received'}`;
     
-    // Format time
     let time = "";
     if (msg.createdAt) {
         const date = msg.createdAt.toDate();
         time = date.getHours() + ":" + String(date.getMinutes()).padStart(2, '0');
     }
 
-    div.innerHTML = `
-        ${msg.text}
-        <span class="timestamp">${time}</span>
-    `;
+    div.innerHTML = `${msg.text}<span class="timestamp">${time}</span>`;
     msgContainer.appendChild(div);
 }
 
-// Send Message
 msgForm.addEventListener('submit', async (e) => {
     e.preventDefault();
     const text = msgInput.value.trim();
     if (!text || !selectedUser) return;
 
-    const chatId = getChatId(currentUser.uid, selectedUser.uid);
+    const chatId = [currentUser.uid, selectedUser.uid].sort().join("_");
+    msgInput.value = ''; // Clear input first
 
-    // Add message to subcollection
-    await addDoc(collection(db, "chats", chatId, "messages"), {
-        text: text,
-        senderId: currentUser.uid,
-        createdAt: serverTimestamp()
-    });
-
-    msgInput.value = '';
-    scrollToBottom();
+    try {
+        await addDoc(collection(db, "chats", chatId, "messages"), {
+            text: text,
+            senderId: currentUser.uid,
+            createdAt: serverTimestamp()
+        });
+        scrollToBottom();
+    } catch (e) {
+        console.error("Error sending message:", e);
+    }
 });
 
 function scrollToBottom() {
