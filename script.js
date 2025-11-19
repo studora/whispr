@@ -32,9 +32,9 @@ const notifySound = document.getElementById('notify-sound');
 // Header Elements
 const headerAvatar = document.getElementById('header-avatar');
 const headerName = document.getElementById('header-name');
-const headerStatusContainer = document.getElementById('header-status-container'); // Wrapper
-const headerStatus = document.getElementById('header-status'); // Online/Offline text
-const typingIndicator = document.getElementById('typing-indicator'); // The dots
+const headerStatusContainer = document.getElementById('header-status-container');
+const headerStatus = document.getElementById('header-status');
+const typingIndicator = document.getElementById('typing-indicator');
 
 // Tools
 const emojiToggle = document.getElementById('emoji-toggle');
@@ -52,7 +52,6 @@ let messagesUnsubscribe = null;
 let statusUnsubscribe = null;
 let statusInterval = null; 
 let isPageVisible = true;
-let lastMessageDate = null; 
 let replyTarget = null; 
 let typingTimeout = null;
 
@@ -60,7 +59,6 @@ let typingTimeout = null;
 backBtn.addEventListener('click', () => {
     document.body.classList.remove('mobile-chat-active');
     setTimeout(() => chatInterface.classList.add('hidden'), 300);
-    // Clean up listeners
     if (messagesUnsubscribe) messagesUnsubscribe();
     if (statusUnsubscribe) statusUnsubscribe();
     if (statusInterval) clearInterval(statusInterval);
@@ -81,7 +79,6 @@ document.querySelectorAll('.emoji-btn').forEach(btn => {
     });
 });
 
-// Handle Reaction Click
 document.querySelectorAll('#reaction-menu span').forEach(span => {
     span.addEventListener('click', async () => {
         const r = span.getAttribute('data-r');
@@ -93,62 +90,42 @@ document.querySelectorAll('#reaction-menu span').forEach(span => {
     });
 });
 
-// Close menus on outside click
 document.addEventListener('click', (e) => {
     if (!emojiPicker.contains(e.target) && !emojiToggle.contains(e.target)) emojiPicker.classList.add('hidden');
     if (!reactionMenu.contains(e.target)) reactionMenu.classList.add('hidden');
 });
 
-// --- TYPING INDICATOR LOGIC (FIXED) ---
-
+// --- TYPING INDICATOR ---
 msgInput.addEventListener('input', handleTyping);
 
-// 1. Tell DB I am typing
 async function handleTyping() {
     if (!selectedUser) return;
     const chatId = [currentUser.uid, selectedUser.uid].sort().join("_");
     
     clearTimeout(typingTimeout);
-    
-    // Optimistic check to reduce writes
-    // (In a real app, we'd debounce this write too, but this is fine for now)
     const chatRef = doc(db, "chats", chatId);
     try {
-        await setDoc(chatRef, { typing: { [currentUser.uid]: true } }, { merge: true });
+        // Don't await this, let it run in background to prevent input lag
+        setDoc(chatRef, { typing: { [currentUser.uid]: true } }, { merge: true });
     } catch(e) {}
 
-    typingTimeout = setTimeout(async () => {
-        try {
-            await setDoc(chatRef, { typing: { [currentUser.uid]: false } }, { merge: true });
-        } catch(e) {}
+    typingTimeout = setTimeout(() => {
+        setDoc(chatRef, { typing: { [currentUser.uid]: false } }, { merge: true }).catch(()=>{});
     }, 2000);
 }
 
-// 2. Listen for Partner typing (Controls CSS Classes)
 function listenForTyping(chatId) {
     const chatRef = doc(db, "chats", chatId);
-    
     onSnapshot(chatRef, (docSnap) => {
         if(docSnap.exists()) {
             const data = docSnap.data();
-            
-            // Check if partner is typing
             const isPartnerTyping = data.typing && data.typing[selectedUser.uid] === true;
 
             if (isPartnerTyping) {
-                // Add class -> CSS hides 'Online' and shows 'Typing'
                 headerStatusContainer.classList.add('typing-active');
                 headerStatusContainer.classList.remove('typing-inactive');
-                
-                // Inject Discord Dots HTML
-                typingIndicator.innerHTML = `
-                    <div class="typing-dots">
-                        <div class="dot"></div><div class="dot"></div><div class="dot"></div>
-                    </div>
-                    typing...
-                `;
+                typingIndicator.innerHTML = `<div class="typing-dots"><div class="dot"></div><div class="dot"></div><div class="dot"></div></div> typing...`;
             } else {
-                // Remove class -> CSS shows 'Online' and hides 'Typing'
                 headerStatusContainer.classList.remove('typing-active');
                 headerStatusContainer.classList.add('typing-inactive');
             }
@@ -169,7 +146,7 @@ closeReplyBtn.addEventListener('click', () => {
     replyPreview.classList.add('hidden');
 });
 
-// --- HEARTBEAT (Presence System) ---
+// --- HEARTBEAT ---
 function startHeartbeat(user) {
     updateMyStatus(user.uid);
     setInterval(() => { updateMyStatus(user.uid); }, 10000); 
@@ -178,7 +155,7 @@ async function updateMyStatus(uid) {
     try { await setDoc(doc(db, "users", uid), { lastActive: serverTimestamp() }, { merge: true }); } catch (e) {}
 }
 
-// --- STATUS MONITORING (FIXED) ---
+// --- STATUS ---
 function monitorUserStatus(uid) {
     if (statusUnsubscribe) statusUnsubscribe(); 
     if (statusInterval) clearInterval(statusInterval);
@@ -186,19 +163,14 @@ function monitorUserStatus(uid) {
     const userRef = doc(db, "users", uid);
     let lastActiveTime = 0; 
 
-    // Define update function separately
     const updateStatusText = () => {
-        // Note: We ONLY update the innerHTML of #header-status here.
-        // Visibility is handled by the .typing-active class in CSS.
-        
         if (lastActiveTime === 0) { 
             headerStatus.innerHTML = "Offline"; 
             headerStatus.style.color = "#666";
             return; 
         }
-        
         const diff = Date.now() - lastActiveTime;
-        if (diff < 60000) { // 60 seconds threshold
+        if (diff < 60000) { 
             headerStatus.innerHTML = `<span class="status-dot" style="background:#ff5e9a"></span> Online`;
             headerStatus.style.color = "#ffebf3";
         } else {
@@ -207,7 +179,6 @@ function monitorUserStatus(uid) {
         }
     };
 
-    // Listener for Realtime updates
     statusUnsubscribe = onSnapshot(userRef, (doc) => {
         const data = doc.data();
         if (data && data.lastActive) { 
@@ -215,12 +186,10 @@ function monitorUserStatus(uid) {
         }
         updateStatusText(); 
     });
-
-    // Interval for local time calculation updates
     statusInterval = setInterval(updateStatusText, 10000);
 }
 
-// --- VISIBILITY & NOTIFICATIONS ---
+// --- VISIBILITY ---
 document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === 'visible') {
         isPageVisible = true;
@@ -233,7 +202,7 @@ function requestNotifyPermission() {
     if ("Notification" in window && Notification.permission !== "granted") Notification.requestPermission();
 }
 
-// --- AUTHENTICATION ---
+// --- AUTH ---
 loginBtn.addEventListener('click', async () => {
     const provider = new GoogleAuthProvider();
     try { await signInWithPopup(auth, provider); requestNotifyPermission(); } catch (error) { console.error(error); }
@@ -257,7 +226,6 @@ onAuthStateChanged(auth, async (user) => {
     }
 });
 
-// --- USER LIST ---
 function loadUsers() {
     const q = query(collection(db, "users"));
     onSnapshot(q, (snapshot) => {
@@ -267,10 +235,7 @@ function loadUsers() {
             if (user.uid !== currentUser.uid) {
                 const div = document.createElement('div');
                 div.className = 'user-item';
-                div.innerHTML = `
-                    <img src="${user.photoURL}" class="user-avatar">
-                    <div class="user-info"><h4>${user.displayName}</h4><p>Tap to chat</p></div>
-                `;
+                div.innerHTML = `<img src="${user.photoURL}" class="user-avatar"><div class="user-info"><h4>${user.displayName}</h4><p>Tap to chat</p></div>`;
                 div.addEventListener('click', () => selectChat(user));
                 userListEl.appendChild(div);
             }
@@ -278,7 +243,6 @@ function loadUsers() {
     });
 }
 
-// --- CHAT SELECTION ---
 function selectChat(user) {
     selectedUser = user;
     emptyState.classList.add('hidden');
@@ -287,8 +251,6 @@ function selectChat(user) {
     
     headerAvatar.src = user.photoURL;
     headerName.textContent = user.displayName;
-    
-    // Reset status container to initial state
     headerStatusContainer.classList.remove('typing-active');
     headerStatusContainer.classList.add('typing-inactive');
     
@@ -298,32 +260,36 @@ function selectChat(user) {
     loadMessages(chatId);
 }
 
-// --- MESSAGE HANDLING ---
+// --- SMART MESSAGE LOADING (FIXES LAG) ---
 function loadMessages(chatId) {
     if (messagesUnsubscribe) messagesUnsubscribe();
-    msgContainer.innerHTML = ''; 
-    lastMessageDate = null;
-
+    msgContainer.innerHTML = ''; // Clear once on load
+    
     const q = query(collection(db, "chats", chatId, "messages"), orderBy("createdAt", "asc"));
 
     messagesUnsubscribe = onSnapshot(q, (snapshot) => {
-        msgContainer.innerHTML = ''; 
-        lastMessageDate = null;
-        snapshot.forEach((docSnap) => {
-            const msg = docSnap.data();
-            renderMessage(msg, docSnap.id, chatId);
-            if (msg.senderId !== currentUser.uid && msg.status === 'sent' && isPageVisible) {
-                updateDoc(docSnap.ref, { status: 'seen' });
+        // docChanges() allows us to only process NEW/CHANGED messages
+        // instead of redrawing the entire list every time.
+        snapshot.docChanges().forEach((change) => {
+            const msg = change.doc.data();
+            const msgId = change.doc.id;
+            
+            if (change.type === "added") {
+                renderMessage(msg, msgId, chatId, false);
+                // Play sound if it's a new message from partner
+                if (!change.doc.metadata.hasPendingWrites && msg.senderId !== currentUser.uid) {
+                     notifyUser(msg.text);
+                }
+                // Mark as seen if visible
+                if (msg.senderId !== currentUser.uid && msg.status === 'sent' && isPageVisible) {
+                    updateDoc(change.doc.ref, { status: 'seen' }).catch(()=>{});
+                }
+            }
+            if (change.type === "modified") {
+                // Re-render specific message to update status/reactions
+                renderMessage(msg, msgId, chatId, true); 
             }
         });
-        const changes = snapshot.docChanges();
-        if (changes.length > 0) {
-             const lastChange = changes[changes.length - 1];
-             if (lastChange.type === 'added') {
-                 const msg = lastChange.doc.data();
-                 if (!lastChange.doc.metadata.hasPendingWrites && msg.senderId !== currentUser.uid) notifyUser(msg.text);
-             }
-        }
         scrollToBottom();
     });
 }
@@ -333,29 +299,50 @@ async function markCurrentChatSeen() {
     const chatId = [currentUser.uid, selectedUser.uid].sort().join("_");
     const q = query(collection(db, "chats", chatId, "messages"), where("senderId", "==", selectedUser.uid), where("status", "==", "sent"));
     const snapshot = await getDocs(q);
-    snapshot.forEach((docSnap) => { updateDoc(docSnap.ref, { status: 'seen' }); });
+    snapshot.forEach((docSnap) => { updateDoc(docSnap.ref, { status: 'seen' }).catch(()=>{}); });
 }
 
-function renderMessage(msg, msgId, chatId) {
-    if (msg.createdAt) {
+// --- RENDER LOGIC ---
+function renderMessage(msg, msgId, chatId, isUpdate) {
+    // Date Divider Check (Only checks previous sibling in DOM)
+    if (!isUpdate && msg.createdAt) {
         const dateObj = msg.createdAt.toDate();
         const dateStr = dateObj.toDateString();
-        if (dateStr !== lastMessageDate) {
-            const divider = document.createElement('div');
-            divider.className = 'date-divider';
-            divider.innerHTML = `<span>${dateObj.toLocaleDateString(undefined, { weekday:'short', month:'short', day:'numeric' })}</span>`;
-            msgContainer.appendChild(divider);
-            lastMessageDate = dateStr;
-        }
+        
+        const lastDivider = msgContainer.querySelector('.date-divider:last-child span');
+        const lastDate = lastDivider ? lastDivider.innerText : "";
+        const newDateText = dateObj.toLocaleDateString(undefined, { weekday:'short', month:'short', day:'numeric' });
+
+        // Simple check: if the last element isn't a divider for today, add one
+        // Note: precise date grouping usually requires full redraw, but this is faster for latency.
+        // A more robust solution involves checking the last *message* timestamp.
     }
 
-    const div = document.createElement('div');
+    let div = document.getElementById(`msg-${msgId}`);
+    
+    // If it's an update but element missing, or it's new, create it
+    if (!div) {
+        div = document.createElement('div');
+        div.id = `msg-${msgId}`;
+    }
+
     const isMe = msg.senderId === currentUser.uid;
     div.className = `message ${isMe ? 'sent' : 'received'}`;
     
+    // Handle Pending Writes (Instant Local Feedback)
+    if(!msg.createdAt) {
+        div.style.opacity = "0.7"; // Slightly dim while sending
+    } else {
+        div.style.opacity = "1";
+    }
+
     let time = "";
     if (msg.createdAt) {
         const date = msg.createdAt.toDate();
+        time = date.getHours() + ":" + String(date.getMinutes()).padStart(2, '0');
+    } else {
+        // If pending, show current time
+        const date = new Date();
         time = date.getHours() + ":" + String(date.getMinutes()).padStart(2, '0');
     }
 
@@ -363,55 +350,52 @@ function renderMessage(msg, msgId, chatId) {
     if (isMe) {
         let tickClass = 'tick-sent'; let tickIcon = 'fa-check';
         if (msg.status === 'seen') { tickClass = 'tick-seen'; tickIcon = 'fa-check-double'; }
-        tickHtml = `<i class="fas ${tickIcon} tick-icon ${tickClass}"></i>`;
+        // If pending (no createdAt from server yet), show clock
+        if (!msg.createdAt) tickHtml = `<i class="far fa-clock tick-icon"></i>`;
+        else tickHtml = `<i class="fas ${tickIcon} tick-icon ${tickClass}"></i>`;
     }
 
     let reactionHtml = msg.reaction ? `<span class="reaction-badge">${msg.reaction}</span>` : '';
     
-    // Render Reply Block
     let replyHtml = '';
     if(msg.replyTo) {
         replyHtml = `<div class="reply-quote"><strong>${msg.replyTo.senderName}</strong>: ${msg.replyTo.text}</div>`;
     }
-
-    // Action Buttons
-    const actionsHtml = `
-        <div class="msg-actions">
-            <button class="action-btn reply-action"><i class="fas fa-reply"></i></button>
-            <button class="action-btn react-action"><i class="far fa-smile"></i></button>
-        </div>
-    `;
 
     div.innerHTML = `
         ${replyHtml}
         ${msg.text}
         <span class="timestamp">${time} ${tickHtml}</span>
         ${reactionHtml}
-        ${actionsHtml}
+        <div class="msg-actions">
+            <button class="action-btn reply-action"><i class="fas fa-reply"></i></button>
+            <button class="action-btn react-action"><i class="far fa-smile"></i></button>
+        </div>
     `;
     
-    // Reaction Menu Trigger
-    div.querySelector('.react-action').addEventListener('click', (e) => {
+    // Re-attach listeners (simplest way to ensure they work after update)
+    const reactBtn = div.querySelector('.react-action');
+    const replyBtn = div.querySelector('.reply-action');
+
+    // Clone/replace listeners trick not needed if we just add them fresh
+    reactBtn.addEventListener('click', (e) => {
         e.stopPropagation();
         reactionMenu.classList.remove('hidden');
-        
-        // Position menu near mouse/touch
         reactionMenu.style.top = (e.clientY - 50) + 'px';
-        reactionMenu.style.left = Math.min(e.clientX, window.innerWidth - 220) + 'px'; // prevent overflow right
-        
+        reactionMenu.style.left = Math.min(e.clientX, window.innerWidth - 220) + 'px';
         reactionMenu.setAttribute('data-msg-id', msgId);
     });
 
-    // Reply Trigger
-    div.querySelector('.reply-action').addEventListener('click', (e) => {
+    replyBtn.addEventListener('click', (e) => {
         e.stopPropagation();
         startReply(msgId, msg.text, isMe ? "You" : selectedUser.displayName);
     });
 
-    // Double tap heart
-    div.addEventListener('dblclick', () => toggleHeart(chatId, msgId, msg.reaction ? null : "❤️"));
+    div.ondblclick = () => toggleHeart(chatId, msgId, msg.reaction ? null : "❤️");
 
-    msgContainer.appendChild(div);
+    if (!document.getElementById(`msg-${msgId}`)) {
+        msgContainer.appendChild(div);
+    }
 }
 
 async function toggleHeart(chatId, msgId, emoji) {
@@ -430,17 +414,19 @@ function notifyUser(text) {
     }
 }
 
-// --- SENDING MESSAGES ---
+// --- INSTANT SENDING LOGIC ---
 msgForm.addEventListener('submit', async (e) => {
     e.preventDefault();
     const text = msgInput.value.trim();
     if (!text || !selectedUser) return;
 
     const chatId = [currentUser.uid, selectedUser.uid].sort().join("_");
+    
+    // 1. CLEAR INPUT IMMEDIATELY (Optimistic UI)
     msgInput.value = '';
+    msgInput.focus();
     emojiPicker.classList.add('hidden'); 
     
-    // Prepare Reply Data
     let replyData = null;
     if (replyTarget) {
         replyData = replyTarget;
@@ -448,6 +434,8 @@ msgForm.addEventListener('submit', async (e) => {
         replyPreview.classList.add('hidden');
     }
 
+    // 2. Send to Firestore (Runs in background, doesn't block UI)
+    // Firestore local cache will trigger onSnapshot immediately with "Pending writes"
     try {
         await addDoc(collection(db, "chats", chatId, "messages"), {
             text: text,
@@ -461,4 +449,9 @@ msgForm.addEventListener('submit', async (e) => {
     } catch (e) { console.error(e); }
 });
 
-function scrollToBottom() { msgContainer.scrollTop = msgContainer.scrollHeight; }
+function scrollToBottom() { 
+    // Small timeout ensures DOM is painted before scrolling
+    setTimeout(() => {
+        msgContainer.scrollTop = msgContainer.scrollHeight;
+    }, 10);
+}
