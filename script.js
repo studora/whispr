@@ -29,7 +29,7 @@ const msgInput = document.getElementById('message-input');
 const msgContainer = document.getElementById('messages-container');
 const notifySound = document.getElementById('notify-sound');
 
-// Header Elements
+// Header
 const headerAvatar = document.getElementById('header-avatar');
 const headerName = document.getElementById('header-name');
 const headerStatusContainer = document.getElementById('header-status-container');
@@ -54,8 +54,9 @@ let statusInterval = null;
 let isPageVisible = true;
 let replyTarget = null; 
 let typingTimeout = null;
+let lastDateRendered = null;
 
-// --- MOBILE NAVIGATION ---
+// --- MOBILE NAV ---
 backBtn.addEventListener('click', () => {
     document.body.classList.remove('mobile-chat-active');
     setTimeout(() => chatInterface.classList.add('hidden'), 300);
@@ -65,7 +66,7 @@ backBtn.addEventListener('click', () => {
     selectedUser = null;
 });
 
-// --- EMOJI & REACTION MENU ---
+// --- EMOJI & MENU ---
 emojiToggle.addEventListener('click', (e) => {
     e.stopPropagation();
     emojiPicker.classList.toggle('hidden');
@@ -75,7 +76,7 @@ document.querySelectorAll('.emoji-btn').forEach(btn => {
     btn.addEventListener('click', () => {
         msgInput.value += btn.textContent;
         msgInput.focus();
-        handleTyping(); 
+        handleTyping();
     });
 });
 
@@ -84,7 +85,6 @@ document.querySelectorAll('#reaction-menu span').forEach(span => {
         const r = span.getAttribute('data-r');
         const msgId = reactionMenu.getAttribute('data-msg-id');
         const chatId = [currentUser.uid, selectedUser.uid].sort().join("_");
-        
         await toggleHeart(chatId, msgId, r);
         reactionMenu.classList.add('hidden');
     });
@@ -95,22 +95,20 @@ document.addEventListener('click', (e) => {
     if (!reactionMenu.contains(e.target)) reactionMenu.classList.add('hidden');
 });
 
-// --- TYPING INDICATOR ---
+// --- TYPING ---
 msgInput.addEventListener('input', handleTyping);
 
 async function handleTyping() {
     if (!selectedUser) return;
     const chatId = [currentUser.uid, selectedUser.uid].sort().join("_");
-    
     clearTimeout(typingTimeout);
     const chatRef = doc(db, "chats", chatId);
-    try {
-        // Don't await this, let it run in background to prevent input lag
-        setDoc(chatRef, { typing: { [currentUser.uid]: true } }, { merge: true });
-    } catch(e) {}
+    
+    // Don't await, fire and forget
+    try { setDoc(chatRef, { typing: { [currentUser.uid]: true } }, { merge: true }); } catch(e) {}
 
     typingTimeout = setTimeout(() => {
-        setDoc(chatRef, { typing: { [currentUser.uid]: false } }, { merge: true }).catch(()=>{});
+        try { setDoc(chatRef, { typing: { [currentUser.uid]: false } }, { merge: true }); } catch(e) {}
     }, 2000);
 }
 
@@ -120,7 +118,6 @@ function listenForTyping(chatId) {
         if(docSnap.exists()) {
             const data = docSnap.data();
             const isPartnerTyping = data.typing && data.typing[selectedUser.uid] === true;
-
             if (isPartnerTyping) {
                 headerStatusContainer.classList.add('typing-active');
                 headerStatusContainer.classList.remove('typing-inactive');
@@ -133,7 +130,7 @@ function listenForTyping(chatId) {
     });
 }
 
-// --- REPLY SYSTEM ---
+// --- REPLY ---
 function startReply(id, text, senderName) {
     replyTarget = { id, text, senderName };
     replyPreview.classList.remove('hidden');
@@ -149,28 +146,24 @@ closeReplyBtn.addEventListener('click', () => {
 // --- HEARTBEAT ---
 function startHeartbeat(user) {
     updateMyStatus(user.uid);
-    setInterval(() => { updateMyStatus(user.uid); }, 10000); 
+    setInterval(() => { updateMyStatus(user.uid); }, 30000); // Update every 30s is enough
 }
 async function updateMyStatus(uid) {
     try { await setDoc(doc(db, "users", uid), { lastActive: serverTimestamp() }, { merge: true }); } catch (e) {}
 }
 
-// --- STATUS ---
 function monitorUserStatus(uid) {
     if (statusUnsubscribe) statusUnsubscribe(); 
     if (statusInterval) clearInterval(statusInterval);
-    
     const userRef = doc(db, "users", uid);
     let lastActiveTime = 0; 
 
     const updateStatusText = () => {
         if (lastActiveTime === 0) { 
-            headerStatus.innerHTML = "Offline"; 
-            headerStatus.style.color = "#666";
-            return; 
+            headerStatus.innerHTML = "Offline"; headerStatus.style.color = "#666"; return; 
         }
         const diff = Date.now() - lastActiveTime;
-        if (diff < 60000) { 
+        if (diff < 65000) { // 65 seconds buffer
             headerStatus.innerHTML = `<span class="status-dot" style="background:#ff5e9a"></span> Online`;
             headerStatus.style.color = "#ffebf3";
         } else {
@@ -181,9 +174,7 @@ function monitorUserStatus(uid) {
 
     statusUnsubscribe = onSnapshot(userRef, (doc) => {
         const data = doc.data();
-        if (data && data.lastActive) { 
-            lastActiveTime = data.lastActive.toDate().getTime(); 
-        }
+        if (data && data.lastActive) { lastActiveTime = data.lastActive.toDate().getTime(); }
         updateStatusText(); 
     });
     statusInterval = setInterval(updateStatusText, 10000);
@@ -260,36 +251,40 @@ function selectChat(user) {
     loadMessages(chatId);
 }
 
-// --- SMART MESSAGE LOADING (FIXES LAG) ---
+// --- INSTANT MESSAGES (THE FIX) ---
 function loadMessages(chatId) {
     if (messagesUnsubscribe) messagesUnsubscribe();
-    msgContainer.innerHTML = ''; // Clear once on load
-    
+    msgContainer.innerHTML = '';
+    lastDateRendered = null;
+
     const q = query(collection(db, "chats", chatId, "messages"), orderBy("createdAt", "asc"));
 
-    messagesUnsubscribe = onSnapshot(q, (snapshot) => {
-        // docChanges() allows us to only process NEW/CHANGED messages
-        // instead of redrawing the entire list every time.
+    // KEY FIX: { includeMetadataChanges: true }
+    // This tells Firebase: "Fire this event IMMEDIATELY when I send a message, even if server hasn't replied."
+    messagesUnsubscribe = onSnapshot(q, { includeMetadataChanges: true }, (snapshot) => {
+        
         snapshot.docChanges().forEach((change) => {
             const msg = change.doc.data();
             const msgId = change.doc.id;
-            
+
             if (change.type === "added") {
-                renderMessage(msg, msgId, chatId, false);
-                // Play sound if it's a new message from partner
-                if (!change.doc.metadata.hasPendingWrites && msg.senderId !== currentUser.uid) {
+                renderMessage(msg, msgId, chatId);
+                
+                // If it's a new incoming message (not mine, and not local)
+                if (msg.senderId !== currentUser.uid && !change.doc.metadata.hasPendingWrites) {
                      notifyUser(msg.text);
                 }
-                // Mark as seen if visible
-                if (msg.senderId !== currentUser.uid && msg.status === 'sent' && isPageVisible) {
+                // Mark as seen
+                if (msg.senderId !== currentUser.uid && msg.status === 'sent' && isPageVisible && !change.doc.metadata.hasPendingWrites) {
                     updateDoc(change.doc.ref, { status: 'seen' }).catch(()=>{});
                 }
             }
             if (change.type === "modified") {
-                // Re-render specific message to update status/reactions
-                renderMessage(msg, msgId, chatId, true); 
+                // Update existing bubble (e.g., tick change, reaction)
+                updateMessageElement(msg, msgId);
             }
         });
+        
         scrollToBottom();
     });
 }
@@ -302,46 +297,49 @@ async function markCurrentChatSeen() {
     snapshot.forEach((docSnap) => { updateDoc(docSnap.ref, { status: 'seen' }).catch(()=>{}); });
 }
 
-// --- RENDER LOGIC ---
-function renderMessage(msg, msgId, chatId, isUpdate) {
-    // Date Divider Check (Only checks previous sibling in DOM)
-    if (!isUpdate && msg.createdAt) {
+function renderMessage(msg, msgId, chatId) {
+    // Avoid duplicates
+    if (document.getElementById(`msg-${msgId}`)) return;
+
+    // Logic for Date Headers
+    if (msg.createdAt) {
         const dateObj = msg.createdAt.toDate();
         const dateStr = dateObj.toDateString();
-        
-        const lastDivider = msgContainer.querySelector('.date-divider:last-child span');
-        const lastDate = lastDivider ? lastDivider.innerText : "";
-        const newDateText = dateObj.toLocaleDateString(undefined, { weekday:'short', month:'short', day:'numeric' });
-
-        // Simple check: if the last element isn't a divider for today, add one
-        // Note: precise date grouping usually requires full redraw, but this is faster for latency.
-        // A more robust solution involves checking the last *message* timestamp.
+        if (dateStr !== lastDateRendered) {
+            const div = document.createElement('div');
+            div.className = 'date-divider';
+            div.innerHTML = `<span>${dateObj.toLocaleDateString(undefined, { weekday:'short', month:'short', day:'numeric' })}</span>`;
+            msgContainer.appendChild(div);
+            lastDateRendered = dateStr;
+        }
     }
 
-    let div = document.getElementById(`msg-${msgId}`);
+    const div = document.createElement('div');
+    div.id = `msg-${msgId}`; // Assign ID for updates
+    fillMessageContent(div, msg, msgId, chatId);
     
-    // If it's an update but element missing, or it's new, create it
-    if (!div) {
-        div = document.createElement('div');
-        div.id = `msg-${msgId}`;
-    }
+    msgContainer.appendChild(div);
+}
 
+function updateMessageElement(msg, msgId) {
+    const div = document.getElementById(`msg-${msgId}`);
+    if (div) {
+        // Just re-fill the inner HTML to update reaction/ticks
+        const chatId = [currentUser.uid, selectedUser.uid].sort().join("_");
+        fillMessageContent(div, msg, msgId, chatId);
+    }
+}
+
+function fillMessageContent(div, msg, msgId, chatId) {
     const isMe = msg.senderId === currentUser.uid;
     div.className = `message ${isMe ? 'sent' : 'received'}`;
     
-    // Handle Pending Writes (Instant Local Feedback)
-    if(!msg.createdAt) {
-        div.style.opacity = "0.7"; // Slightly dim while sending
-    } else {
-        div.style.opacity = "1";
-    }
-
     let time = "";
     if (msg.createdAt) {
         const date = msg.createdAt.toDate();
         time = date.getHours() + ":" + String(date.getMinutes()).padStart(2, '0');
     } else {
-        // If pending, show current time
+        // If "Pending Writes" (Instant send), use local time
         const date = new Date();
         time = date.getHours() + ":" + String(date.getMinutes()).padStart(2, '0');
     }
@@ -350,8 +348,8 @@ function renderMessage(msg, msgId, chatId, isUpdate) {
     if (isMe) {
         let tickClass = 'tick-sent'; let tickIcon = 'fa-check';
         if (msg.status === 'seen') { tickClass = 'tick-seen'; tickIcon = 'fa-check-double'; }
-        // If pending (no createdAt from server yet), show clock
-        if (!msg.createdAt) tickHtml = `<i class="far fa-clock tick-icon"></i>`;
+        // If createdAt is null, it means it's still sending (Latency Compensation)
+        if (!msg.createdAt) tickHtml = `<i class="far fa-clock tick-icon"></i>`; 
         else tickHtml = `<i class="fas ${tickIcon} tick-icon ${tickClass}"></i>`;
     }
 
@@ -372,13 +370,12 @@ function renderMessage(msg, msgId, chatId, isUpdate) {
             <button class="action-btn react-action"><i class="far fa-smile"></i></button>
         </div>
     `;
-    
-    // Re-attach listeners (simplest way to ensure they work after update)
+
+    // Re-bind events
     const reactBtn = div.querySelector('.react-action');
     const replyBtn = div.querySelector('.reply-action');
 
-    // Clone/replace listeners trick not needed if we just add them fresh
-    reactBtn.addEventListener('click', (e) => {
+    if(reactBtn) reactBtn.addEventListener('click', (e) => {
         e.stopPropagation();
         reactionMenu.classList.remove('hidden');
         reactionMenu.style.top = (e.clientY - 50) + 'px';
@@ -386,16 +383,12 @@ function renderMessage(msg, msgId, chatId, isUpdate) {
         reactionMenu.setAttribute('data-msg-id', msgId);
     });
 
-    replyBtn.addEventListener('click', (e) => {
+    if(replyBtn) replyBtn.addEventListener('click', (e) => {
         e.stopPropagation();
         startReply(msgId, msg.text, isMe ? "You" : selectedUser.displayName);
     });
 
     div.ondblclick = () => toggleHeart(chatId, msgId, msg.reaction ? null : "❤️");
-
-    if (!document.getElementById(`msg-${msgId}`)) {
-        msgContainer.appendChild(div);
-    }
 }
 
 async function toggleHeart(chatId, msgId, emoji) {
@@ -414,7 +407,7 @@ function notifyUser(text) {
     }
 }
 
-// --- INSTANT SENDING LOGIC ---
+// --- SEND BUTTON ---
 msgForm.addEventListener('submit', async (e) => {
     e.preventDefault();
     const text = msgInput.value.trim();
@@ -422,7 +415,7 @@ msgForm.addEventListener('submit', async (e) => {
 
     const chatId = [currentUser.uid, selectedUser.uid].sort().join("_");
     
-    // 1. CLEAR INPUT IMMEDIATELY (Optimistic UI)
+    // 1. Clear Input IMMEDIATELY (Zero Delay)
     msgInput.value = '';
     msgInput.focus();
     emojiPicker.classList.add('hidden'); 
@@ -434,8 +427,8 @@ msgForm.addEventListener('submit', async (e) => {
         replyPreview.classList.add('hidden');
     }
 
-    // 2. Send to Firestore (Runs in background, doesn't block UI)
-    // Firestore local cache will trigger onSnapshot immediately with "Pending writes"
+    // 2. Add Doc. Because of "includeMetadataChanges: true" above, 
+    // the snapshot listener will fire INSTANTLY for this local change.
     try {
         await addDoc(collection(db, "chats", chatId, "messages"), {
             text: text,
@@ -450,8 +443,5 @@ msgForm.addEventListener('submit', async (e) => {
 });
 
 function scrollToBottom() { 
-    // Small timeout ensures DOM is painted before scrolling
-    setTimeout(() => {
-        msgContainer.scrollTop = msgContainer.scrollHeight;
-    }, 10);
+    setTimeout(() => { msgContainer.scrollTop = msgContainer.scrollHeight; }, 50);
 }
