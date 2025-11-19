@@ -3,17 +3,10 @@ import { getAuth, signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChang
 import { getFirestore, collection, addDoc, query, orderBy, onSnapshot, serverTimestamp, setDoc, doc, updateDoc, where, getDocs } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore.js";
 
 // --- CONFIGURATION ---
-const firebaseConfig = {
-  apiKey: "AIzaSyDKTmbeR8vxWOimsera1WmC6a5mZc_Ewkc",
-  authDomain: "closeddoor-58ac5.firebaseapp.com",
-  projectId: "closeddoor-58ac5",
-  storageBucket: "closeddoor-58ac5.firebasestorage.app",
-  messagingSenderId: "330800003542",
-  appId: "1:330800003542:web:2d02cf0d6eb01d5bdfcc77",
-  measurementId: "G-B1DJWK271Y"
-};
+const response = await fetch('./myaaj.json');
+const config = await response.json();
 
-const app = initializeApp(firebaseConfig);
+const app = initializeApp(config);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
