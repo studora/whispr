@@ -3,16 +3,22 @@ import { getAuth, signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChang
 import { getFirestore, collection, addDoc, query, orderBy, onSnapshot, serverTimestamp, setDoc, doc, updateDoc, where, getDocs } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore.js";
 
 // --- CONFIGURATION ---
-const response = await fetch('./myaaj.json');
-const config = await response.json();
+const firebaseConfig = {
+  apiKey: "AIzaSyDKTmbeR8vxWOimsera1WmC6a5mZc_Ewkc",
+  authDomain: "closeddoor-58ac5.firebaseapp.com",
+  projectId: "closeddoor-58ac5",
+  storageBucket: "closeddoor-58ac5.firebasestorage.app",
+  messagingSenderId: "330800003542",
+  appId: "1:330800003542:web:2d02cf0d6eb01d5bdfcc77",
+  measurementId: "G-B1DJWK271Y"
+};
 
-const app = initializeApp(config);
+const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
 // DOM Elements
 const loginScreen = document.getElementById('login-screen');
-const appScreen = document.getElementById('app');
 const loginBtn = document.getElementById('login-btn');
 const logoutBtn = document.getElementById('logout-btn');
 const userListEl = document.getElementById('user-list');
@@ -23,9 +29,14 @@ const msgInput = document.getElementById('message-input');
 const msgContainer = document.getElementById('messages-container');
 const notifySound = document.getElementById('notify-sound');
 const headerStatus = document.getElementById('header-status');
+const typingIndicator = document.getElementById('typing-indicator'); // NEW
 const emojiToggle = document.getElementById('emoji-toggle');
 const emojiPicker = document.getElementById('emoji-picker');
 const backBtn = document.getElementById('back-btn');
+const replyPreview = document.getElementById('reply-preview'); // NEW
+const replyText = document.getElementById('reply-text'); // NEW
+const closeReplyBtn = document.getElementById('close-reply'); // NEW
+const reactionMenu = document.getElementById('reaction-menu'); // NEW
 
 // State
 let currentUser = null;
@@ -35,20 +46,20 @@ let statusUnsubscribe = null;
 let statusInterval = null; 
 let isPageVisible = true;
 let lastMessageDate = null; 
+let replyTarget = null; // Stores message ID being replied to
+let typingTimeout = null;
 
 // --- MOBILE NAVIGATION ---
 backBtn.addEventListener('click', () => {
     document.body.classList.remove('mobile-chat-active');
-    // Delay hiding interface slightly for animation smoothness, or hide immediately
     setTimeout(() => chatInterface.classList.add('hidden'), 300);
-    
     if (messagesUnsubscribe) messagesUnsubscribe();
     if (statusUnsubscribe) statusUnsubscribe();
     if (statusInterval) clearInterval(statusInterval);
     selectedUser = null;
 });
 
-// --- EMOJI ---
+// --- EMOJI & REACTION MENU ---
 emojiToggle.addEventListener('click', (e) => {
     e.stopPropagation();
     emojiPicker.classList.toggle('hidden');
@@ -58,86 +69,124 @@ document.querySelectorAll('.emoji-btn').forEach(btn => {
     btn.addEventListener('click', () => {
         msgInput.value += btn.textContent;
         msgInput.focus();
+        handleTyping(); // Trigger typing
+    });
+});
+
+// Reaction Menu Logic
+document.querySelectorAll('#reaction-menu span').forEach(span => {
+    span.addEventListener('click', async () => {
+        const r = span.getAttribute('data-r');
+        const msgId = reactionMenu.getAttribute('data-msg-id');
+        const chatId = [currentUser.uid, selectedUser.uid].sort().join("_");
+        
+        await toggleHeart(chatId, msgId, r); // Using r as the specific emoji
+        reactionMenu.classList.add('hidden');
     });
 });
 
 document.addEventListener('click', (e) => {
-    if (!emojiPicker.contains(e.target) && !emojiToggle.contains(e.target)) {
-        emojiPicker.classList.add('hidden');
-    }
+    if (!emojiPicker.contains(e.target) && !emojiToggle.contains(e.target)) emojiPicker.classList.add('hidden');
+    if (!reactionMenu.contains(e.target)) reactionMenu.classList.add('hidden');
 });
 
-// --- HEARTBEAT (ONLINE STATUS) ---
+// --- TYPING INDICATOR LOGIC ---
+msgInput.addEventListener('input', handleTyping);
+
+async function handleTyping() {
+    if (!selectedUser) return;
+    const chatId = [currentUser.uid, selectedUser.uid].sort().join("_");
+    
+    // Update Firestore that I am typing
+    try {
+        // We update a dedicated collection or field. Here we use 'users' status for simplicity or chats doc
+        const chatRef = doc(db, "chats", chatId);
+        await setDoc(chatRef, { typing: { [currentUser.uid]: true } }, { merge: true });
+        
+        clearTimeout(typingTimeout);
+        typingTimeout = setTimeout(async () => {
+            await setDoc(chatRef, { typing: { [currentUser.uid]: false } }, { merge: true });
+        }, 2000); // Stop typing after 2 seconds of inactivity
+    } catch(e) {}
+}
+
+function listenForTyping(chatId) {
+    const chatRef = doc(db, "chats", chatId);
+    onSnapshot(chatRef, (doc) => {
+        if(doc.exists()) {
+            const data = doc.data();
+            // Check if the OTHER user is typing
+            if (data.typing && data.typing[selectedUser.uid]) {
+                typingIndicator.classList.remove('hidden');
+                headerStatus.classList.add('hidden');
+            } else {
+                typingIndicator.classList.add('hidden');
+                headerStatus.classList.remove('hidden');
+            }
+        }
+    });
+}
+
+// --- REPLY SYSTEM ---
+function startReply(id, text, senderName) {
+    replyTarget = { id, text, senderName };
+    replyPreview.classList.remove('hidden');
+    replyText.textContent = text;
+    msgInput.focus();
+}
+
+closeReplyBtn.addEventListener('click', () => {
+    replyTarget = null;
+    replyPreview.classList.add('hidden');
+});
+
+// --- HEARTBEAT ---
 function startHeartbeat(user) {
     updateMyStatus(user.uid);
-    // Update every 10 seconds
     setInterval(() => { updateMyStatus(user.uid); }, 10000); 
 }
-
 async function updateMyStatus(uid) {
-    try { 
-        await setDoc(doc(db, "users", uid), { lastActive: serverTimestamp() }, { merge: true }); 
-    } catch (e) {}
+    try { await setDoc(doc(db, "users", uid), { lastActive: serverTimestamp() }, { merge: true }); } catch (e) {}
 }
 
-// --- VISIBILITY & MARK SEEN ---
+// --- VISIBILITY ---
 document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === 'visible') {
         isPageVisible = true;
         document.title = "ClosedDoor";
-        // If we are in a chat, mark pending messages as seen immediately
         if (selectedUser) markCurrentChatSeen();
-    } else {
-        isPageVisible = false;
-    }
+    } else { isPageVisible = false; }
 });
 
 function requestNotifyPermission() {
-    if ("Notification" in window && Notification.permission !== "granted") {
-        Notification.requestPermission();
-    }
+    if ("Notification" in window && Notification.permission !== "granted") Notification.requestPermission();
 }
 
-// --- AUTHENTICATION ---
+// --- AUTH ---
 loginBtn.addEventListener('click', async () => {
     const provider = new GoogleAuthProvider();
-    try {
-        await signInWithPopup(auth, provider);
-        requestNotifyPermission();
-    } catch (error) { console.error(error); }
+    try { await signInWithPopup(auth, provider); requestNotifyPermission(); } catch (error) { console.error(error); }
 });
-
-logoutBtn.addEventListener('click', () => {
-    signOut(auth);
-    location.reload();
-});
+logoutBtn.addEventListener('click', () => { signOut(auth); location.reload(); });
 
 onAuthStateChanged(auth, async (user) => {
     if (user) {
         currentUser = user;
         loginScreen.classList.add('hidden');
-        appScreen.classList.remove('hidden');
-        
+        document.getElementById('app').classList.remove('hidden');
         document.getElementById('my-avatar').src = user.photoURL;
         document.getElementById('my-name').textContent = user.displayName.split(' ')[0];
-
-        await setDoc(doc(db, "users", user.uid), {
-            uid: user.uid,
-            displayName: user.displayName,
-            photoURL: user.photoURL,
-            email: user.email
-        }, { merge: true });
-
+        await setDoc(doc(db, "users", user.uid), { uid: user.uid, displayName: user.displayName, photoURL: user.photoURL, email: user.email }, { merge: true });
         startHeartbeat(user);
         loadUsers();
     } else {
         currentUser = null;
         loginScreen.classList.remove('hidden');
-        appScreen.classList.add('hidden');
+        document.getElementById('app').classList.add('hidden');
     }
 });
 
-// --- LOAD USERS ---
+// --- USERS ---
 function loadUsers() {
     const q = query(collection(db, "users"));
     onSnapshot(q, (snapshot) => {
@@ -149,10 +198,7 @@ function loadUsers() {
                 div.className = 'user-item';
                 div.innerHTML = `
                     <img src="${user.photoURL}" class="user-avatar">
-                    <div class="user-info">
-                        <h4>${user.displayName}</h4>
-                        <p>Tap to chat</p>
-                    </div>
+                    <div class="user-info"><h4>${user.displayName}</h4><p>Tap to chat</p></div>
                 `;
                 div.addEventListener('click', () => selectChat(user));
                 userListEl.appendChild(div);
@@ -161,38 +207,33 @@ function loadUsers() {
     });
 }
 
-// --- CHAT SELECTION ---
+// --- CHAT SELECT ---
 function selectChat(user) {
     selectedUser = user;
-    
     emptyState.classList.add('hidden');
     chatInterface.classList.remove('hidden');
-    document.body.classList.add('mobile-chat-active'); // Trigger Mobile View
-
+    document.body.classList.add('mobile-chat-active');
     document.getElementById('header-avatar').src = user.photoURL;
     document.getElementById('header-name').textContent = user.displayName;
     
-    monitorUserStatus(user.uid);
     const chatId = [currentUser.uid, selectedUser.uid].sort().join("_");
+    monitorUserStatus(user.uid);
+    listenForTyping(chatId); // New: Listen for typing
     loadMessages(chatId);
 }
 
-// --- STATUS MONITOR ---
+// --- STATUS ---
 function monitorUserStatus(uid) {
     if (statusUnsubscribe) statusUnsubscribe(); 
     if (statusInterval) clearInterval(statusInterval);
-
     const userRef = doc(db, "users", uid);
     let lastActiveTime = 0; 
-
     statusUnsubscribe = onSnapshot(userRef, (doc) => {
         const data = doc.data();
         if (data && data.lastActive) { lastActiveTime = data.lastActive.toDate().getTime(); }
         updateUI(); 
     });
-
     statusInterval = setInterval(() => { updateUI(); }, 5000);
-
     function updateUI() {
         if (lastActiveTime === 0) { headerStatus.innerHTML = "Offline"; return; }
         const diff = Date.now() - lastActiveTime;
@@ -206,93 +247,57 @@ function monitorUserStatus(uid) {
     }
 }
 
-// --- MESSAGES & SEEN LOGIC ---
+// --- MESSAGES ---
 function loadMessages(chatId) {
     if (messagesUnsubscribe) messagesUnsubscribe();
     msgContainer.innerHTML = ''; 
     lastMessageDate = null;
 
-    const q = query(
-        collection(db, "chats", chatId, "messages"), 
-        orderBy("createdAt", "asc")
-    );
+    const q = query(collection(db, "chats", chatId, "messages"), orderBy("createdAt", "asc"));
 
     messagesUnsubscribe = onSnapshot(q, (snapshot) => {
         msgContainer.innerHTML = ''; 
         lastMessageDate = null;
-
         snapshot.forEach((docSnap) => {
             const msg = docSnap.data();
-            const msgId = docSnap.id;
-            
-            renderMessage(msg, msgId, chatId);
-
-            // ** MARK AS SEEN LOGIC **
-            // If I am the receiver, the message is 'sent' (not seen yet), and I am looking at the page
+            renderMessage(msg, docSnap.id, chatId);
             if (msg.senderId !== currentUser.uid && msg.status === 'sent' && isPageVisible) {
                 updateDoc(docSnap.ref, { status: 'seen' });
             }
         });
-
-        // ** NOTIFICATIONS **
         const changes = snapshot.docChanges();
         if (changes.length > 0) {
              const lastChange = changes[changes.length - 1];
              if (lastChange.type === 'added') {
                  const msg = lastChange.doc.data();
-                 // Only notify if message is new and NOT from me
-                 if (!lastChange.doc.metadata.hasPendingWrites && msg.senderId !== currentUser.uid) {
-                     notifyUser(msg.text);
-                 }
+                 if (!lastChange.doc.metadata.hasPendingWrites && msg.senderId !== currentUser.uid) notifyUser(msg.text);
              }
         }
-        
         scrollToBottom();
     });
 }
 
-// Helper to batch mark seen when tabbing back in
 async function markCurrentChatSeen() {
     if (!currentUser || !selectedUser) return;
     const chatId = [currentUser.uid, selectedUser.uid].sort().join("_");
-    
-    // Query for messages sent by partner that are still 'sent'
-    const q = query(
-        collection(db, "chats", chatId, "messages"),
-        where("senderId", "==", selectedUser.uid),
-        where("status", "==", "sent")
-    );
-
+    const q = query(collection(db, "chats", chatId, "messages"), where("senderId", "==", selectedUser.uid), where("status", "==", "sent"));
     const snapshot = await getDocs(q);
-    snapshot.forEach((docSnap) => {
-        updateDoc(docSnap.ref, { status: 'seen' });
-    });
-}
-
-function getFormattedDate(date) {
-    const today = new Date();
-    const yesterday = new Date(today);
-    yesterday.setDate(yesterday.getDate() - 1);
-    if (date.toDateString() === today.toDateString()) return "Today";
-    if (date.toDateString() === yesterday.toDateString()) return "Yesterday";
-    return date.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+    snapshot.forEach((docSnap) => { updateDoc(docSnap.ref, { status: 'seen' }); });
 }
 
 function renderMessage(msg, msgId, chatId) {
-    // 1. Date Header
     if (msg.createdAt) {
         const dateObj = msg.createdAt.toDate();
         const dateStr = dateObj.toDateString();
         if (dateStr !== lastMessageDate) {
             const divider = document.createElement('div');
             divider.className = 'date-divider';
-            divider.innerHTML = `<span>${getFormattedDate(dateObj)}</span>`;
+            divider.innerHTML = `<span>${dateObj.toLocaleDateString(undefined, { weekday:'short', month:'short', day:'numeric' })}</span>`;
             msgContainer.appendChild(divider);
             lastMessageDate = dateStr;
         }
     }
 
-    // 2. Message Bubble
     const div = document.createElement('div');
     const isMe = msg.senderId === currentUser.uid;
     div.className = `message ${isMe ? 'sent' : 'received'}`;
@@ -303,45 +308,63 @@ function renderMessage(msg, msgId, chatId) {
         time = date.getHours() + ":" + String(date.getMinutes()).padStart(2, '0');
     }
 
-    // 3. Ticks Logic
     let tickHtml = '';
     if (isMe) {
-        // Default (Sent)
-        let tickClass = 'tick-sent'; 
-        let tickIcon = 'fa-check';
-
-        // Seen
-        if (msg.status === 'seen') {
-            tickClass = 'tick-seen';
-            tickIcon = 'fa-check-double';
-        }
-        
+        let tickClass = 'tick-sent'; let tickIcon = 'fa-check';
+        if (msg.status === 'seen') { tickClass = 'tick-seen'; tickIcon = 'fa-check-double'; }
         tickHtml = `<i class="fas ${tickIcon} tick-icon ${tickClass}"></i>`;
     }
 
-    // 4. Reaction Logic
-    let reactionHtml = msg.reaction ? `<span class="reaction-badge">❤️</span>` : '';
+    let reactionHtml = msg.reaction ? `<span class="reaction-badge">${msg.reaction}</span>` : '';
+    
+    // Render Reply Block
+    let replyHtml = '';
+    if(msg.replyTo) {
+        replyHtml = `<div class="reply-quote"><strong>${msg.replyTo.senderName}</strong>: ${msg.replyTo.text}</div>`;
+    }
+
+    // Action Buttons (Reply/React) - Mobile friendly touch area
+    const actionsHtml = `
+        <div class="msg-actions">
+            <button class="action-btn reply-action"><i class="fas fa-reply"></i></button>
+            <button class="action-btn react-action"><i class="far fa-smile"></i></button>
+        </div>
+    `;
 
     div.innerHTML = `
+        ${replyHtml}
         ${msg.text}
-        <span class="timestamp">
-            ${time} ${tickHtml}
-        </span>
+        <span class="timestamp">${time} ${tickHtml}</span>
         ${reactionHtml}
+        ${actionsHtml}
     `;
     
-    div.addEventListener('dblclick', () => toggleHeart(chatId, msgId, msg.reaction));
+    // Reaction Menu Trigger
+    div.querySelector('.react-action').addEventListener('click', (e) => {
+        e.stopPropagation();
+        reactionMenu.classList.remove('hidden');
+        reactionMenu.style.top = (e.clientY - 50) + 'px';
+        reactionMenu.style.left = e.clientX + 'px';
+        reactionMenu.setAttribute('data-msg-id', msgId);
+    });
+
+    // Reply Trigger
+    div.querySelector('.reply-action').addEventListener('click', (e) => {
+        e.stopPropagation();
+        startReply(msgId, msg.text, isMe ? "You" : selectedUser.displayName);
+    });
+
+    // Double tap heart (Classic)
+    div.addEventListener('dblclick', () => toggleHeart(chatId, msgId, msg.reaction ? null : "❤️"));
+
     msgContainer.appendChild(div);
 }
 
-// --- REACTION LOGIC ---
-async function toggleHeart(chatId, msgId, currentReaction) {
+async function toggleHeart(chatId, msgId, emoji) {
     const msgRef = doc(db, "chats", chatId, "messages", msgId);
-    const newStatus = currentReaction ? null : true;
-    try { await updateDoc(msgRef, { reaction: newStatus }); } catch (e) {}
+    try { await updateDoc(msgRef, { reaction: emoji }); } catch (e) {}
 }
 
-// --- NOTIFICATIONS ---
 function notifyUser(text) {
     if (!isPageVisible) {
         document.title = `(1) ❤️ Message`;
@@ -353,7 +376,6 @@ function notifyUser(text) {
     }
 }
 
-// --- SEND MESSAGE ---
 msgForm.addEventListener('submit', async (e) => {
     e.preventDefault();
     const text = msgInput.value.trim();
@@ -362,6 +384,14 @@ msgForm.addEventListener('submit', async (e) => {
     const chatId = [currentUser.uid, selectedUser.uid].sort().join("_");
     msgInput.value = '';
     emojiPicker.classList.add('hidden'); 
+    
+    // Prepare Reply Data
+    let replyData = null;
+    if (replyTarget) {
+        replyData = replyTarget;
+        replyTarget = null;
+        replyPreview.classList.add('hidden');
+    }
 
     try {
         await addDoc(collection(db, "chats", chatId, "messages"), {
@@ -369,12 +399,11 @@ msgForm.addEventListener('submit', async (e) => {
             senderId: currentUser.uid,
             createdAt: serverTimestamp(),
             reaction: null,
-            status: 'sent' // Default status
+            status: 'sent',
+            replyTo: replyData // Save reply info
         });
         scrollToBottom();
     } catch (e) { console.error(e); }
 });
 
-function scrollToBottom() {
-    msgContainer.scrollTop = msgContainer.scrollHeight;
-}
+function scrollToBottom() { msgContainer.scrollTop = msgContainer.scrollHeight; }
