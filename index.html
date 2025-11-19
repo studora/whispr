@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sotto Chat</title>
+    <link rel="stylesheet" href="style.css">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+</head>
+<body>
+
+    <!-- LOGIN SCREEN -->
+    <div id="login-screen">
+        <div class="login-card">
+            <h1>Sotto.</h1>
+            <p>Private, minimal, yours.</p>
+            <button id="login-btn"><i class="fab fa-google"></i> Sign in with Google</button>
+        </div>
+    </div>
+
+    <!-- MAIN APP -->
+    <div id="app" class="hidden">
+        
+        <!-- SIDEBAR (User List) -->
+        <aside class="sidebar">
+            <div class="my-profile">
+                <img id="my-avatar" src="" alt="My Avatar">
+                <span id="my-name">Me</span>
+                <button id="logout-btn" title="Logout"><i class="fas fa-sign-out-alt"></i></button>
+            </div>
+            <div class="search-bar">
+                <input type="text" placeholder="Search chats...">
+            </div>
+            <div id="user-list">
+                <!-- Users load here dynamically -->
+                <div class="loading">Loading users...</div>
+            </div>
+        </aside>
+
+        <!-- CHAT AREA -->
+        <main class="chat-area">
+            
+            <!-- EMPTY STATE (No chat selected) -->
+            <div id="empty-state">
+                <h2>Select a conversation</h2>
+                <p>Choose a contact from the left to start chatting.</p>
+            </div>
+
+            <!-- ACTIVE CHAT -->
+            <div id="chat-interface" class="hidden">
+                <header class="chat-header">
+                    <div class="chat-partner-info">
+                        <img id="header-avatar" src="" alt="">
+                        <div>
+                            <h3 id="header-name">User Name</h3>
+                            <span class="status-dot"></span> <span class="status-text">Active now</span>
+                        </div>
+                    </div>
+                    <div class="header-actions">
+                        <i class="fas fa-phone-alt"></i>
+                        <i class="fas fa-video"></i>
+                        <i class="fas fa-info-circle"></i>
+                    </div>
+                </header>
+
+                <div id="messages-container">
+                    <!-- Messages inject here -->
+                </div>
+
+                <form id="message-form">
+                    <button type="button" class="attach-btn"><i class="fas fa-paperclip"></i></button>
+                    <input type="text" id="message-input" placeholder="Type a message..." autocomplete="off">
+                    <button type="submit" class="send-btn"><i class="fas fa-paper-plane"></i></button>
+                </form>
+            </div>
+        </main>
+    </div>
+
+    <!-- Firebase SDK (Modular) -->
+    <script type="module" src="script.js"></script>
+</body>
+</html>
