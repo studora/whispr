@@ -13,7 +13,6 @@ const firebaseConfig = {
   measurementId: "G-B1DJWK271Y"
 };
 
-// Initialize Firebase
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
@@ -30,26 +29,46 @@ const msgForm = document.getElementById('message-form');
 const msgInput = document.getElementById('message-input');
 const msgContainer = document.getElementById('messages-container');
 const notifySound = document.getElementById('notify-sound');
+const headerStatus = document.getElementById('header-status'); // New status element
 
 // State
 let currentUser = null;
 let selectedUser = null;
 let messagesUnsubscribe = null;
+let statusUnsubscribe = null; // To listen to online status
 let isPageVisible = true;
 
-// --- NOTIFICATIONS & VISIBILITY ---
+// --- 1. HEARTBEAT SYSTEM (Online Status) ---
+// Updates "lastActive" every 2 minutes so others know I'm online
+function startHeartbeat(user) {
+    // Update immediately
+    updateMyStatus(user.uid);
+    
+    // Then update every 2 minutes
+    setInterval(() => {
+        updateMyStatus(user.uid);
+    }, 30000);
+}
 
-// 1. Check if user is looking at the tab
+async function updateMyStatus(uid) {
+    try {
+        await setDoc(doc(db, "users", uid), {
+            lastActive: serverTimestamp(),
+            // We merge so we don't overwrite name/photo
+        }, { merge: true });
+    } catch (e) { console.log("Heartbeat skipped"); }
+}
+
+// --- 2. VISIBILITY & NOTIFICATIONS ---
 document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === 'visible') {
         isPageVisible = true;
-        document.title = "ClosedDoor"; // Reset title when you come back
+        document.title = "ClosedDoor";
     } else {
         isPageVisible = false;
     }
 });
 
-// 2. Request Permission
 function requestNotifyPermission() {
     if ("Notification" in window && Notification.permission !== "granted") {
         Notification.requestPermission();
@@ -61,11 +80,9 @@ loginBtn.addEventListener('click', async () => {
     const provider = new GoogleAuthProvider();
     try {
         await signInWithPopup(auth, provider);
-        // Ask for notification permission immediately after login
         requestNotifyPermission();
     } catch (error) {
         console.error("Login Error:", error);
-        alert("Login failed. Turn off AdBlockers if using them.");
     }
 });
 
@@ -83,16 +100,16 @@ onAuthStateChanged(auth, async (user) => {
         document.getElementById('my-avatar').src = user.photoURL;
         document.getElementById('my-name').textContent = user.displayName.split(' ')[0];
 
-        // Save User to DB
-        try {
-            await setDoc(doc(db, "users", user.uid), {
-                uid: user.uid,
-                displayName: user.displayName,
-                photoURL: user.photoURL,
-                email: user.email,
-                lastActive: serverTimestamp()
-            }, { merge: true });
-        } catch(e) { console.log("DB Error (Check AdBlocker)"); }
+        // Save basic info
+        await setDoc(doc(db, "users", user.uid), {
+            uid: user.uid,
+            displayName: user.displayName,
+            photoURL: user.photoURL,
+            email: user.email
+        }, { merge: true });
+
+        // Start the "I am Online" signal
+        startHeartbeat(user);
 
         loadUsers();
     } else {
@@ -135,8 +152,38 @@ function selectChat(user) {
     document.getElementById('header-avatar').src = user.photoURL;
     document.getElementById('header-name').textContent = user.displayName;
     
+    // START LISTENING TO THEIR ONLINE STATUS
+    monitorUserStatus(user.uid);
+
+    // Load messages
     const chatId = [currentUser.uid, selectedUser.uid].sort().join("_");
     loadMessages(chatId);
+}
+
+// --- REAL-TIME STATUS CHECK ---
+function monitorUserStatus(uid) {
+    if (statusUnsubscribe) statusUnsubscribe(); // Stop listening to previous user
+
+    const userRef = doc(db, "users", uid);
+    statusUnsubscribe = onSnapshot(userRef, (doc) => {
+        const data = doc.data();
+        if (data && data.lastActive) {
+            const lastActiveTime = data.lastActive.toDate().getTime();
+            const currentTime = Date.now();
+            const diff = currentTime - lastActiveTime;
+
+            // If active in last 3 minutes (180000 ms), consider Online
+            if (diff < 180000) {
+                headerStatus.innerHTML = `<span class="status-dot" style="background:#4cd137"></span> Online`;
+                headerStatus.style.color = "#e0e0e0";
+            } else {
+                headerStatus.innerHTML = `<span class="status-dot" style="background:#666"></span> Offline`;
+                headerStatus.style.color = "#666";
+            }
+        } else {
+            headerStatus.innerHTML = "Offline";
+        }
+    });
 }
 
 function loadMessages(chatId) {
@@ -149,14 +196,12 @@ function loadMessages(chatId) {
     );
 
     messagesUnsubscribe = onSnapshot(q, (snapshot) => {
-        // snapshot.docChanges() gives us specifically what changed (added/modified)
         snapshot.docChanges().forEach((change) => {
             if (change.type === "added") {
                 const msg = change.doc.data();
                 renderMessage(msg);
                 
-                // NOTIFICATION TRIGGER
-                // If it's a new message (not local write) AND not from me
+                // NOTIFICATION
                 if (!change.doc.metadata.hasPendingWrites && msg.senderId !== currentUser.uid) {
                     notifyUser(msg.text);
                 }
@@ -181,38 +226,25 @@ function renderMessage(msg) {
     msgContainer.appendChild(div);
 }
 
-// --- NOTIFICATION SYSTEM ---
 function notifyUser(text) {
-    // Only notify if page is NOT visible (user is in another tab or minimized)
     if (!isPageVisible) {
-        
-        // 1. Flash Tab Title
-        document.title = `(1) New Message | ClosedDoor`;
+        // 1. Navbar/Tab Flash
+        document.title = `(1) Message | ClosedDoor`;
 
-        // 2. Play Sound (If allowed)
-        try {
-            notifySound.currentTime = 0;
-            notifySound.play().catch(() => {}); // Catch error if user hasn't interacted
-        } catch (e) {}
+        // 2. Sound
+        try { notifySound.currentTime = 0; notifySound.play().catch(()=>{}); } catch(e){}
 
-        // 3. System Notification (Pop-up)
+        // 3. System Pop-up
         if (Notification.permission === "granted") {
-            const notification = new Notification(`New Message from ${selectedUser.displayName}`, {
+            const n = new Notification(`New Message`, {
                 body: text,
-                icon: selectedUser.photoURL,
-                silent: true // We play our own sound
+                icon: selectedUser.photoURL
             });
-            
-            // If user clicks notification, focus the window
-            notification.onclick = () => {
-                window.focus();
-                notification.close();
-            };
+            n.onclick = () => window.focus();
         }
     }
 }
 
-// Send Message
 msgForm.addEventListener('submit', async (e) => {
     e.preventDefault();
     const text = msgInput.value.trim();
@@ -228,9 +260,7 @@ msgForm.addEventListener('submit', async (e) => {
             createdAt: serverTimestamp()
         });
         scrollToBottom();
-    } catch (e) {
-        console.error("Error sending message:", e);
-    }
+    } catch (e) { console.error(e); }
 });
 
 function scrollToBottom() {
