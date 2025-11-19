@@ -9,7 +9,6 @@
 </head>
 <body>
 
-    <!-- LOGIN SCREEN -->
     <div id="login-screen">
         <div class="login-card">
             <div class="heart-icon"><i class="fas fa-heart"></i></div>
@@ -19,10 +18,8 @@
         </div>
     </div>
 
-    <!-- MAIN APP -->
     <div id="app" class="hidden">
         
-        <!-- SIDEBAR -->
         <aside class="sidebar">
             <div class="my-profile">
                 <img id="my-avatar" src="" alt="My Avatar">
@@ -35,7 +32,6 @@
             </div>
         </aside>
 
-        <!-- CHAT AREA -->
         <main class="chat-area">
             
             <div id="empty-state">
@@ -44,7 +40,6 @@
                 <p>Pick a person to start the romance.</p>
             </div>
 
-            <!-- ACTIVE CHAT INTERFACE -->
             <div id="chat-interface" class="hidden">
                 <header class="chat-header">
                     <button id="back-btn"><i class="fas fa-chevron-left"></i></button>
@@ -53,7 +48,6 @@
                         <img id="header-avatar" src="" alt="">
                         <div>
                             <h3 id="header-name">User</h3>
-                            <!-- Status Container (Updated for Logic) -->
                             <div id="header-status-container" class="typing-inactive">
                                 <span id="header-status" class="status-text">Loading...</span>
                                 <span id="typing-indicator"></span>
@@ -64,7 +58,6 @@
 
                 <div id="messages-container"></div>
 
-                <!-- REACTION MENU (Hidden Overlay) -->
                 <div id="reaction-menu" class="hidden">
                     <span data-r="❤️">❤️</span>
                     <span data-r="😂">😂</span>
@@ -74,7 +67,6 @@
                     <span data-r="👍">👍</span>
                 </div>
 
-                <!-- EMOJI PICKER -->
                 <div id="emoji-picker" class="hidden">
                     <span class="emoji-btn">❤️</span><span class="emoji-btn">😂</span><span class="emoji-btn">😍</span>
                     <span class="emoji-btn">😭</span><span class="emoji-btn">😡</span><span class="emoji-btn">👍</span>
@@ -83,9 +75,7 @@
                     <span class="emoji-btn">💋</span><span class="emoji-btn">🫂</span><span class="emoji-btn">💍</span>
                 </div>
 
-                <!-- INPUT AREA -->
                 <form id="message-form">
-                    <!-- REPLY PREVIEW -->
                     <div id="reply-preview" class="hidden">
                         <div class="reply-content">
                             <span class="reply-title">Replying to...</span>
@@ -104,8 +94,6 @@
         </main>
     </div>
     
-    <audio id="notify-sound" preload="auto" src="data:audio/mpeg;base64,//NExAAAAANIAAAAAExBTUUzLjEwMKqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq//NExAAAAANIAAAAAExBTUUzLjEwMKqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq//NExAAAAANIAAAAAExBTUUzLjEwMKqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq"></audio>
-
     <script type="module" src="script.js"></script>
 </body>
 </html>
