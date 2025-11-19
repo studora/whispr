@@ -1,6 +1,7 @@
+// --- IMPORTS FOR REALTIME DATABASE ---
 import { initializeApp } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-app.js";
 import { getAuth, signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-auth.js";
-import { getFirestore, collection, addDoc, query, orderBy, onSnapshot, serverTimestamp, setDoc, doc, updateDoc, where, getDocs } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore.js";
+import { getDatabase, ref, set, push, onValue, serverTimestamp, query, orderByChild, update, onDisconnect } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-database.js";
 
 // --- CONFIGURATION ---
 const firebaseConfig = {
@@ -10,12 +11,13 @@ const firebaseConfig = {
   storageBucket: "closeddoor-58ac5.firebasestorage.app",
   messagingSenderId: "330800003542",
   appId: "1:330800003542:web:2d02cf0d6eb01d5bdfcc77",
-  measurementId: "G-B1DJWK271Y"
+  measurementId: "G-B1DJWK271Y",
+  databaseURL: "https://closeddoor-58ac5-default-rtdb.firebaseio.com" // IMPORTANT: Ensure this is correct in your Firebase Console
 };
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
-const db = getFirestore(app);
+const db = getDatabase(app); // Using Realtime Database
 
 // --- DOM ELEMENTS ---
 const loginScreen = document.getElementById('login-screen');
@@ -48,84 +50,80 @@ const reactionMenu = document.getElementById('reaction-menu');
 // --- STATE ---
 let currentUser = null;
 let selectedUser = null;
-let messagesUnsubscribe = null;
-let statusUnsubscribe = null;
-let statusInterval = null; 
+let messagesRef = null;
+let messagesListener = null;
+let typingListener = null;
+let presenceInterval = null;
 let isPageVisible = true;
 let replyTarget = null; 
 let typingTimeout = null;
 let lastDateRendered = null;
 
-// --- MOBILE NAV ---
+// --- UI HELPERS ---
 backBtn.addEventListener('click', () => {
     document.body.classList.remove('mobile-chat-active');
     setTimeout(() => chatInterface.classList.add('hidden'), 300);
-    if (messagesUnsubscribe) messagesUnsubscribe();
-    if (statusUnsubscribe) statusUnsubscribe();
-    if (statusInterval) clearInterval(statusInterval);
+    // Detach listeners
+    if (messagesRef) { /* listeners auto-detach when ref changes usually, but good to be safe in complex apps */ }
     selectedUser = null;
 });
 
-// --- EMOJI & MENU ---
-emojiToggle.addEventListener('click', (e) => {
-    e.stopPropagation();
-    emojiPicker.classList.toggle('hidden');
-});
-
+// Emoji & Menus
+emojiToggle.addEventListener('click', (e) => { e.stopPropagation(); emojiPicker.classList.toggle('hidden'); });
 document.querySelectorAll('.emoji-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-        msgInput.value += btn.textContent;
-        msgInput.focus();
-        handleTyping();
-    });
+    btn.addEventListener('click', () => { msgInput.value += btn.textContent; msgInput.focus(); handleTyping(); });
 });
-
-document.querySelectorAll('#reaction-menu span').forEach(span => {
-    span.addEventListener('click', async () => {
-        const r = span.getAttribute('data-r');
-        const msgId = reactionMenu.getAttribute('data-msg-id');
-        const chatId = [currentUser.uid, selectedUser.uid].sort().join("_");
-        await toggleHeart(chatId, msgId, r);
-        reactionMenu.classList.add('hidden');
-    });
-});
-
 document.addEventListener('click', (e) => {
     if (!emojiPicker.contains(e.target) && !emojiToggle.contains(e.target)) emojiPicker.classList.add('hidden');
     if (!reactionMenu.contains(e.target)) reactionMenu.classList.add('hidden');
 });
 
-// --- TYPING ---
+// Reaction Logic
+document.querySelectorAll('#reaction-menu span').forEach(span => {
+    span.addEventListener('click', async () => {
+        const r = span.getAttribute('data-r');
+        const msgId = reactionMenu.getAttribute('data-msg-id');
+        const chatId = [currentUser.uid, selectedUser.uid].sort().join("_");
+        
+        // Update reaction in RTDB
+        const msgRef = ref(db, `chats/${chatId}/messages/${msgId}`);
+        update(msgRef, { reaction: r });
+        
+        reactionMenu.classList.add('hidden');
+    });
+});
+
+// --- TYPING INDICATOR (RTDB) ---
 msgInput.addEventListener('input', handleTyping);
 
-async function handleTyping() {
+function handleTyping() {
     if (!selectedUser) return;
     const chatId = [currentUser.uid, selectedUser.uid].sort().join("_");
-    clearTimeout(typingTimeout);
-    const chatRef = doc(db, "chats", chatId);
-    
-    // Don't await, fire and forget
-    try { setDoc(chatRef, { typing: { [currentUser.uid]: true } }, { merge: true }); } catch(e) {}
+    const myTypingRef = ref(db, `chats/${chatId}/typing/${currentUser.uid}`);
 
+    // Set true
+    set(myTypingRef, true);
+    
+    clearTimeout(typingTimeout);
     typingTimeout = setTimeout(() => {
-        try { setDoc(chatRef, { typing: { [currentUser.uid]: false } }, { merge: true }); } catch(e) {}
+        // Set false after delay
+        set(myTypingRef, false);
     }, 2000);
 }
 
 function listenForTyping(chatId) {
-    const chatRef = doc(db, "chats", chatId);
-    onSnapshot(chatRef, (docSnap) => {
-        if(docSnap.exists()) {
-            const data = docSnap.data();
-            const isPartnerTyping = data.typing && data.typing[selectedUser.uid] === true;
-            if (isPartnerTyping) {
-                headerStatusContainer.classList.add('typing-active');
-                headerStatusContainer.classList.remove('typing-inactive');
-                typingIndicator.innerHTML = `<div class="typing-dots"><div class="dot"></div><div class="dot"></div><div class="dot"></div></div> typing...`;
-            } else {
-                headerStatusContainer.classList.remove('typing-active');
-                headerStatusContainer.classList.add('typing-inactive');
-            }
+    const partnerTypingRef = ref(db, `chats/${chatId}/typing/${selectedUser.uid}`);
+    
+    // onValue fires whenever the value changes
+    onValue(partnerTypingRef, (snapshot) => {
+        const isTyping = snapshot.val();
+        if (isTyping) {
+            headerStatusContainer.classList.add('typing-active');
+            headerStatusContainer.classList.remove('typing-inactive');
+            typingIndicator.innerHTML = `<div class="typing-dots"><div class="dot"></div><div class="dot"></div><div class="dot"></div></div> typing...`;
+        } else {
+            headerStatusContainer.classList.remove('typing-active');
+            headerStatusContainer.classList.add('typing-inactive');
         }
     });
 }
@@ -137,56 +135,60 @@ function startReply(id, text, senderName) {
     replyText.textContent = text;
     msgInput.focus();
 }
+closeReplyBtn.addEventListener('click', () => { replyTarget = null; replyPreview.classList.add('hidden'); });
 
-closeReplyBtn.addEventListener('click', () => {
-    replyTarget = null;
-    replyPreview.classList.add('hidden');
-});
+// --- PRESENCE SYSTEM (True Online/Offline) ---
+function setupPresence(user) {
+    // 1. Store user info in RTDB users node
+    const userRef = ref(db, `users/${user.uid}`);
+    update(userRef, {
+        displayName: user.displayName,
+        photoURL: user.photoURL,
+        email: user.email,
+        uid: user.uid
+    });
 
-// --- HEARTBEAT ---
-function startHeartbeat(user) {
-    updateMyStatus(user.uid);
-    setInterval(() => { updateMyStatus(user.uid); }, 30000); // Update every 30s is enough
-}
-async function updateMyStatus(uid) {
-    try { await setDoc(doc(db, "users", uid), { lastActive: serverTimestamp() }, { merge: true }); } catch (e) {}
+    // 2. Handle Online/Offline status using .info/connected
+    const myConnectionsRef = ref(db, `users/${user.uid}/connections`);
+    const lastOnlineRef = ref(db, `users/${user.uid}/lastOnline`);
+    const connectedRef = ref(db, '.info/connected');
+
+    onValue(connectedRef, (snap) => {
+        if (snap.val() === true) {
+            // We're connected (or reconnected)!
+            const con = push(myConnectionsRef);
+            
+            // When I disconnect, remove this connection
+            onDisconnect(con).remove();
+            
+            // When I disconnect, update the last time I was seen
+            onDisconnect(lastOnlineRef).set(serverTimestamp());
+            
+            // Add this device to my connections list
+            set(con, true);
+        }
+    });
 }
 
 function monitorUserStatus(uid) {
-    if (statusUnsubscribe) statusUnsubscribe(); 
-    if (statusInterval) clearInterval(statusInterval);
-    const userRef = doc(db, "users", uid);
-    let lastActiveTime = 0; 
-
-    const updateStatusText = () => {
-        if (lastActiveTime === 0) { 
-            headerStatus.innerHTML = "Offline"; headerStatus.style.color = "#666"; return; 
-        }
-        const diff = Date.now() - lastActiveTime;
-        if (diff < 65000) { // 65 seconds buffer
+    const userConnectionsRef = ref(db, `users/${uid}/connections`);
+    
+    onValue(userConnectionsRef, (snap) => {
+        // If 'connections' exists and has children, they are online
+        if (snap.exists()) {
             headerStatus.innerHTML = `<span class="status-dot" style="background:#ff5e9a"></span> Online`;
             headerStatus.style.color = "#ffebf3";
         } else {
             headerStatus.innerHTML = `<span class="status-dot" style="background:#666"></span> Offline`;
             headerStatus.style.color = "#666";
         }
-    };
-
-    statusUnsubscribe = onSnapshot(userRef, (doc) => {
-        const data = doc.data();
-        if (data && data.lastActive) { lastActiveTime = data.lastActive.toDate().getTime(); }
-        updateStatusText(); 
     });
-    statusInterval = setInterval(updateStatusText, 10000);
 }
 
 // --- VISIBILITY ---
 document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState === 'visible') {
-        isPageVisible = true;
-        document.title = "ClosedDoor";
-        if (selectedUser) markCurrentChatSeen();
-    } else { isPageVisible = false; }
+    isPageVisible = document.visibilityState === 'visible';
+    if (isPageVisible) document.title = "ClosedDoor";
 });
 
 function requestNotifyPermission() {
@@ -195,20 +197,19 @@ function requestNotifyPermission() {
 
 // --- AUTH ---
 loginBtn.addEventListener('click', async () => {
-    const provider = new GoogleAuthProvider();
-    try { await signInWithPopup(auth, provider); requestNotifyPermission(); } catch (error) { console.error(error); }
+    try { await signInWithPopup(auth, new GoogleAuthProvider()); requestNotifyPermission(); } catch (e) { console.error(e); }
 });
 logoutBtn.addEventListener('click', () => { signOut(auth); location.reload(); });
 
-onAuthStateChanged(auth, async (user) => {
+onAuthStateChanged(auth, (user) => {
     if (user) {
         currentUser = user;
         loginScreen.classList.add('hidden');
         document.getElementById('app').classList.remove('hidden');
         document.getElementById('my-avatar').src = user.photoURL;
         document.getElementById('my-name').textContent = user.displayName.split(' ')[0];
-        await setDoc(doc(db, "users", user.uid), { uid: user.uid, displayName: user.displayName, photoURL: user.photoURL, email: user.email }, { merge: true });
-        startHeartbeat(user);
+        
+        setupPresence(user);
         loadUsers();
     } else {
         currentUser = null;
@@ -218,11 +219,11 @@ onAuthStateChanged(auth, async (user) => {
 });
 
 function loadUsers() {
-    const q = query(collection(db, "users"));
-    onSnapshot(q, (snapshot) => {
+    const usersRef = ref(db, 'users');
+    onValue(usersRef, (snapshot) => {
         userListEl.innerHTML = '';
-        snapshot.forEach((doc) => {
-            const user = doc.data();
+        snapshot.forEach((childSnap) => {
+            const user = childSnap.val();
             if (user.uid !== currentUser.uid) {
                 const div = document.createElement('div');
                 div.className = 'user-item';
@@ -251,59 +252,37 @@ function selectChat(user) {
     loadMessages(chatId);
 }
 
-// --- INSTANT MESSAGES (THE FIX) ---
+// --- LOAD MESSAGES (RTDB) ---
 function loadMessages(chatId) {
-    if (messagesUnsubscribe) messagesUnsubscribe();
     msgContainer.innerHTML = '';
     lastDateRendered = null;
+    
+    // Reference to messages node
+    const chatMsgsRef = query(ref(db, `chats/${chatId}/messages`), orderByChild('timestamp'));
+    
+    // Listen for new messages added (Fires for existing ones first, then new ones)
+    onValue(chatMsgsRef, (snapshot) => {
+        msgContainer.innerHTML = ''; // Clear to prevent duplication on full reload
+        lastDateRendered = null; // Reset date tracking
 
-    const q = query(collection(db, "chats", chatId, "messages"), orderBy("createdAt", "asc"));
-
-    // KEY FIX: { includeMetadataChanges: true }
-    // This tells Firebase: "Fire this event IMMEDIATELY when I send a message, even if server hasn't replied."
-    messagesUnsubscribe = onSnapshot(q, { includeMetadataChanges: true }, (snapshot) => {
-        
-        snapshot.docChanges().forEach((change) => {
-            const msg = change.doc.data();
-            const msgId = change.doc.id;
-
-            if (change.type === "added") {
-                renderMessage(msg, msgId, chatId);
-                
-                // If it's a new incoming message (not mine, and not local)
-                if (msg.senderId !== currentUser.uid && !change.doc.metadata.hasPendingWrites) {
-                     notifyUser(msg.text);
-                }
-                // Mark as seen
-                if (msg.senderId !== currentUser.uid && msg.status === 'sent' && isPageVisible && !change.doc.metadata.hasPendingWrites) {
-                    updateDoc(change.doc.ref, { status: 'seen' }).catch(()=>{});
-                }
-            }
-            if (change.type === "modified") {
-                // Update existing bubble (e.g., tick change, reaction)
-                updateMessageElement(msg, msgId);
+        snapshot.forEach((childSnapshot) => {
+            const msg = childSnapshot.val();
+            const msgId = childSnapshot.key;
+            renderMessage(msg, msgId, chatId);
+            
+            // Mark as seen if it's not mine and not seen
+            if (msg.senderId !== currentUser.uid && msg.status !== 'seen' && isPageVisible) {
+                update(ref(db, `chats/${chatId}/messages/${msgId}`), { status: 'seen' });
             }
         });
-        
         scrollToBottom();
     });
 }
 
-async function markCurrentChatSeen() {
-    if (!currentUser || !selectedUser) return;
-    const chatId = [currentUser.uid, selectedUser.uid].sort().join("_");
-    const q = query(collection(db, "chats", chatId, "messages"), where("senderId", "==", selectedUser.uid), where("status", "==", "sent"));
-    const snapshot = await getDocs(q);
-    snapshot.forEach((docSnap) => { updateDoc(docSnap.ref, { status: 'seen' }).catch(()=>{}); });
-}
-
 function renderMessage(msg, msgId, chatId) {
-    // Avoid duplicates
-    if (document.getElementById(`msg-${msgId}`)) return;
-
-    // Logic for Date Headers
-    if (msg.createdAt) {
-        const dateObj = msg.createdAt.toDate();
+    // Date Divider
+    if (msg.timestamp) {
+        const dateObj = new Date(msg.timestamp);
         const dateStr = dateObj.toDateString();
         if (dateStr !== lastDateRendered) {
             const div = document.createElement('div');
@@ -315,50 +294,24 @@ function renderMessage(msg, msgId, chatId) {
     }
 
     const div = document.createElement('div');
-    div.id = `msg-${msgId}`; // Assign ID for updates
-    fillMessageContent(div, msg, msgId, chatId);
-    
-    msgContainer.appendChild(div);
-}
-
-function updateMessageElement(msg, msgId) {
-    const div = document.getElementById(`msg-${msgId}`);
-    if (div) {
-        // Just re-fill the inner HTML to update reaction/ticks
-        const chatId = [currentUser.uid, selectedUser.uid].sort().join("_");
-        fillMessageContent(div, msg, msgId, chatId);
-    }
-}
-
-function fillMessageContent(div, msg, msgId, chatId) {
     const isMe = msg.senderId === currentUser.uid;
     div.className = `message ${isMe ? 'sent' : 'received'}`;
-    
-    let time = "";
-    if (msg.createdAt) {
-        const date = msg.createdAt.toDate();
-        time = date.getHours() + ":" + String(date.getMinutes()).padStart(2, '0');
-    } else {
-        // If "Pending Writes" (Instant send), use local time
-        const date = new Date();
-        time = date.getHours() + ":" + String(date.getMinutes()).padStart(2, '0');
-    }
+    div.id = `msg-${msgId}`;
 
+    // Formatting Time
+    const date = msg.timestamp ? new Date(msg.timestamp) : new Date();
+    const time = date.getHours() + ":" + String(date.getMinutes()).padStart(2, '0');
+
+    // Ticks
     let tickHtml = '';
     if (isMe) {
         let tickClass = 'tick-sent'; let tickIcon = 'fa-check';
         if (msg.status === 'seen') { tickClass = 'tick-seen'; tickIcon = 'fa-check-double'; }
-        // If createdAt is null, it means it's still sending (Latency Compensation)
-        if (!msg.createdAt) tickHtml = `<i class="far fa-clock tick-icon"></i>`; 
-        else tickHtml = `<i class="fas ${tickIcon} tick-icon ${tickClass}"></i>`;
+        tickHtml = `<i class="fas ${tickIcon} tick-icon ${tickClass}"></i>`;
     }
 
     let reactionHtml = msg.reaction ? `<span class="reaction-badge">${msg.reaction}</span>` : '';
-    
-    let replyHtml = '';
-    if(msg.replyTo) {
-        replyHtml = `<div class="reply-quote"><strong>${msg.replyTo.senderName}</strong>: ${msg.replyTo.text}</div>`;
-    }
+    let replyHtml = msg.replyTo ? `<div class="reply-quote"><strong>${msg.replyTo.senderName}</strong>: ${msg.replyTo.text}</div>` : '';
 
     div.innerHTML = `
         ${replyHtml}
@@ -371,11 +324,8 @@ function fillMessageContent(div, msg, msgId, chatId) {
         </div>
     `;
 
-    // Re-bind events
-    const reactBtn = div.querySelector('.react-action');
-    const replyBtn = div.querySelector('.reply-action');
-
-    if(reactBtn) reactBtn.addEventListener('click', (e) => {
+    // Listeners
+    div.querySelector('.react-action').addEventListener('click', (e) => {
         e.stopPropagation();
         reactionMenu.classList.remove('hidden');
         reactionMenu.style.top = (e.clientY - 50) + 'px';
@@ -383,31 +333,20 @@ function fillMessageContent(div, msg, msgId, chatId) {
         reactionMenu.setAttribute('data-msg-id', msgId);
     });
 
-    if(replyBtn) replyBtn.addEventListener('click', (e) => {
+    div.querySelector('.reply-action').addEventListener('click', (e) => {
         e.stopPropagation();
         startReply(msgId, msg.text, isMe ? "You" : selectedUser.displayName);
     });
 
-    div.ondblclick = () => toggleHeart(chatId, msgId, msg.reaction ? null : "❤️");
+    div.addEventListener('dblclick', () => {
+        const emoji = msg.reaction ? null : "❤️";
+        update(ref(db, `chats/${chatId}/messages/${msgId}`), { reaction: emoji });
+    });
+
+    msgContainer.appendChild(div);
 }
 
-async function toggleHeart(chatId, msgId, emoji) {
-    const msgRef = doc(db, "chats", chatId, "messages", msgId);
-    try { await updateDoc(msgRef, { reaction: emoji }); } catch (e) {}
-}
-
-function notifyUser(text) {
-    if (!isPageVisible) {
-        document.title = `(1) ❤️ Message`;
-        try { notifySound.currentTime = 0; notifySound.play().catch(()=>{}); } catch(e){}
-        if (Notification.permission === "granted") {
-            const n = new Notification(`New Message`, { body: text, icon: selectedUser.photoURL });
-            n.onclick = () => window.focus();
-        }
-    }
-}
-
-// --- SEND BUTTON ---
+// --- SEND MESSAGE ---
 msgForm.addEventListener('submit', async (e) => {
     e.preventDefault();
     const text = msgInput.value.trim();
@@ -415,10 +354,10 @@ msgForm.addEventListener('submit', async (e) => {
 
     const chatId = [currentUser.uid, selectedUser.uid].sort().join("_");
     
-    // 1. Clear Input IMMEDIATELY (Zero Delay)
+    // Instant UI clear
     msgInput.value = '';
     msgInput.focus();
-    emojiPicker.classList.add('hidden'); 
+    emojiPicker.classList.add('hidden');
     
     let replyData = null;
     if (replyTarget) {
@@ -427,21 +366,18 @@ msgForm.addEventListener('submit', async (e) => {
         replyPreview.classList.add('hidden');
     }
 
-    // 2. Add Doc. Because of "includeMetadataChanges: true" above, 
-    // the snapshot listener will fire INSTANTLY for this local change.
-    try {
-        await addDoc(collection(db, "chats", chatId, "messages"), {
-            text: text,
-            senderId: currentUser.uid,
-            createdAt: serverTimestamp(),
-            reaction: null,
-            status: 'sent',
-            replyTo: replyData
-        });
-        scrollToBottom();
-    } catch (e) { console.error(e); }
+    // RTDB Push
+    const newMsgRef = push(ref(db, `chats/${chatId}/messages`));
+    await set(newMsgRef, {
+        text: text,
+        senderId: currentUser.uid,
+        timestamp: serverTimestamp(),
+        status: 'sent',
+        reaction: null,
+        replyTo: replyData
+    });
+    
+    scrollToBottom();
 });
 
-function scrollToBottom() { 
-    setTimeout(() => { msgContainer.scrollTop = msgContainer.scrollHeight; }, 50);
-}
+function scrollToBottom() { setTimeout(() => { msgContainer.scrollTop = msgContainer.scrollHeight; }, 50); }
