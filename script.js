@@ -1,6 +1,5 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-app.js";
 import { getAuth, signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-auth.js";
-// ADDED updateDoc here
 import { getFirestore, collection, addDoc, query, orderBy, onSnapshot, serverTimestamp, setDoc, doc, updateDoc } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore.js";
 
 // --- CONFIGURATION ---
@@ -31,9 +30,9 @@ const msgInput = document.getElementById('message-input');
 const msgContainer = document.getElementById('messages-container');
 const notifySound = document.getElementById('notify-sound');
 const headerStatus = document.getElementById('header-status');
-// New DOM Elements
 const emojiToggle = document.getElementById('emoji-toggle');
 const emojiPicker = document.getElementById('emoji-picker');
+const backBtn = document.getElementById('back-btn'); // New Back Button
 
 // State
 let currentUser = null;
@@ -42,10 +41,26 @@ let messagesUnsubscribe = null;
 let statusUnsubscribe = null;
 let statusInterval = null; 
 let isPageVisible = true;
-let lastMessageDate = null; // To track date dividers
+let lastMessageDate = null; 
 
-// --- 1. EMOJI SYSTEM ---
-emojiToggle.addEventListener('click', () => {
+// --- MOBILE NAVIGATION ---
+backBtn.addEventListener('click', () => {
+    // Hide chat, show sidebar
+    document.body.classList.remove('chat-active');
+    chatInterface.classList.add('hidden');
+    // On mobile, we don't strictly need to unhide emptyState because sidebar covers it,
+    // but good for state management.
+    
+    // Stop listening to real-time chat updates to save data
+    if (messagesUnsubscribe) messagesUnsubscribe();
+    if (statusUnsubscribe) statusUnsubscribe();
+    if (statusInterval) clearInterval(statusInterval);
+    selectedUser = null;
+});
+
+// --- EMOJI SYSTEM ---
+emojiToggle.addEventListener('click', (e) => {
+    e.stopPropagation();
     emojiPicker.classList.toggle('hidden');
 });
 
@@ -53,18 +68,16 @@ document.querySelectorAll('.emoji-btn').forEach(btn => {
     btn.addEventListener('click', () => {
         msgInput.value += btn.textContent;
         msgInput.focus();
-        // Don't close picker immediately for multi-emoji spamming
     });
 });
 
-// Close emoji picker if clicked outside
 document.addEventListener('click', (e) => {
     if (!emojiPicker.contains(e.target) && !emojiToggle.contains(e.target)) {
         emojiPicker.classList.add('hidden');
     }
 });
 
-// --- 2. HEARTBEAT SYSTEM ---
+// --- HEARTBEAT ---
 function startHeartbeat(user) {
     updateMyStatus(user.uid);
     setInterval(() => { updateMyStatus(user.uid); }, 10000); 
@@ -76,11 +89,11 @@ async function updateMyStatus(uid) {
     } catch (e) {}
 }
 
-// --- 3. VISIBILITY & PERMISSIONS ---
+// --- VISIBILITY ---
 document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === 'visible') {
         isPageVisible = true;
-        document.title = "LoveLine";
+        document.title = "ClosedDoor";
     } else {
         isPageVisible = false;
     }
@@ -92,7 +105,7 @@ function requestNotifyPermission() {
     }
 }
 
-// --- AUTHENTICATION ---
+// --- AUTH ---
 loginBtn.addEventListener('click', async () => {
     const provider = new GoogleAuthProvider();
     try {
@@ -111,7 +124,6 @@ onAuthStateChanged(auth, async (user) => {
         currentUser = user;
         loginScreen.classList.add('hidden');
         appScreen.classList.remove('hidden');
-        
         document.getElementById('my-avatar').src = user.photoURL;
         document.getElementById('my-name').textContent = user.displayName.split(' ')[0];
 
@@ -131,7 +143,7 @@ onAuthStateChanged(auth, async (user) => {
     }
 });
 
-// --- LOAD USERS ---
+// --- USERS ---
 function loadUsers() {
     const q = query(collection(db, "users"));
     onSnapshot(q, (snapshot) => {
@@ -155,11 +167,17 @@ function loadUsers() {
     });
 }
 
-// --- CHAT LOGIC ---
+// --- CHAT SELECTION (MOBILE LOGIC HERE) ---
 function selectChat(user) {
     selectedUser = user;
+    
+    // 1. UI Updates
     emptyState.classList.add('hidden');
     chatInterface.classList.remove('hidden');
+    
+    // 2. MOBILE TRIGGER: Add class to body to slide chat in
+    document.body.classList.add('chat-active');
+
     document.getElementById('header-avatar').src = user.photoURL;
     document.getElementById('header-name').textContent = user.displayName;
     
@@ -168,7 +186,7 @@ function selectChat(user) {
     loadMessages(chatId);
 }
 
-// --- STATUS CHECK ---
+// --- STATUS MONITOR ---
 function monitorUserStatus(uid) {
     if (statusUnsubscribe) statusUnsubscribe(); 
     if (statusInterval) clearInterval(statusInterval);
@@ -197,11 +215,11 @@ function monitorUserStatus(uid) {
     }
 }
 
-// --- MESSAGES WITH DATE HEADERS ---
+// --- MESSAGES ---
 function loadMessages(chatId) {
     if (messagesUnsubscribe) messagesUnsubscribe();
     msgContainer.innerHTML = ''; 
-    lastMessageDate = null; // Reset date tracker
+    lastMessageDate = null;
 
     const q = query(
         collection(db, "chats", chatId, "messages"), 
@@ -209,19 +227,13 @@ function loadMessages(chatId) {
     );
 
     messagesUnsubscribe = onSnapshot(q, (snapshot) => {
-        // If it's a full reload (e.g. switching chats), clear container
-        // For simplicity in this logic, we often just clear and redraw 
-        // OR smartly append. Here we simple-redraw to keep dates correct easily.
         msgContainer.innerHTML = ''; 
         lastMessageDate = null;
 
         snapshot.forEach((doc) => {
-            const msg = doc.data();
-            const msgId = doc.id;
-            renderMessage(msg, msgId, chatId);
+            renderMessage(doc.data(), doc.id, chatId);
         });
 
-        // Notification Logic (only for new added messages at the end)
         const changes = snapshot.docChanges();
         if (changes.length > 0) {
              const lastChange = changes[changes.length - 1];
@@ -237,24 +249,20 @@ function loadMessages(chatId) {
     });
 }
 
-// --- DATE FORMATTER ---
 function getFormattedDate(date) {
     const today = new Date();
     const yesterday = new Date(today);
     yesterday.setDate(yesterday.getDate() - 1);
-
     if (date.toDateString() === today.toDateString()) return "Today";
     if (date.toDateString() === yesterday.toDateString()) return "Yesterday";
-    
     return date.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
 }
 
 function renderMessage(msg, msgId, chatId) {
-    // 1. Render Date Divider if day changed
+    // Date Header
     if (msg.createdAt) {
         const dateObj = msg.createdAt.toDate();
         const dateStr = dateObj.toDateString();
-        
         if (dateStr !== lastMessageDate) {
             const divider = document.createElement('div');
             divider.className = 'date-divider';
@@ -264,7 +272,6 @@ function renderMessage(msg, msgId, chatId) {
         }
     }
 
-    // 2. Render Message
     const div = document.createElement('div');
     const isMe = msg.senderId === currentUser.uid;
     div.className = `message ${isMe ? 'sent' : 'received'}`;
@@ -275,33 +282,24 @@ function renderMessage(msg, msgId, chatId) {
         time = date.getHours() + ":" + String(date.getMinutes()).padStart(2, '0');
     }
 
-    // Check for reactions
     let reactionHtml = '';
     if (msg.reaction) {
         reactionHtml = `<span class="reaction-badge">❤️</span>`;
     }
 
-    div.innerHTML = `
-        ${msg.text}
-        <span class="timestamp">${time}</span>
-        ${reactionHtml}
-    `;
-
-    // Double click to react
+    div.innerHTML = `${msg.text}<span class="timestamp">${time}</span>${reactionHtml}`;
     div.addEventListener('dblclick', () => toggleHeart(chatId, msgId, msg.reaction));
-
+    
+    // Mobile support: Long press for reaction? Double tap still works on mobile usually.
+    // Adding simple tap-hold logic is complex, double-tap is standard.
+    
     msgContainer.appendChild(div);
 }
 
-// --- REACTION LOGIC (Firestore) ---
 async function toggleHeart(chatId, msgId, currentReaction) {
     const msgRef = doc(db, "chats", chatId, "messages", msgId);
-    // If already hearted, remove it (set null). If not, set true.
     const newStatus = currentReaction ? null : true;
-    
-    try {
-        await updateDoc(msgRef, { reaction: newStatus });
-    } catch (e) { console.error("Error reacting:", e); }
+    try { await updateDoc(msgRef, { reaction: newStatus }); } catch (e) {}
 }
 
 function notifyUser(text) {
@@ -309,10 +307,7 @@ function notifyUser(text) {
         document.title = `(1) ❤️ Message`;
         try { notifySound.currentTime = 0; notifySound.play().catch(()=>{}); } catch(e){}
         if (Notification.permission === "granted") {
-            const n = new Notification(`New Message`, {
-                body: text,
-                icon: selectedUser.photoURL
-            });
+            const n = new Notification(`New Message`, { body: text, icon: selectedUser.photoURL });
             n.onclick = () => window.focus();
         }
     }
@@ -325,14 +320,14 @@ msgForm.addEventListener('submit', async (e) => {
 
     const chatId = [currentUser.uid, selectedUser.uid].sort().join("_");
     msgInput.value = '';
-    emojiPicker.classList.add('hidden'); // Close emoji picker on send
+    emojiPicker.classList.add('hidden'); 
 
     try {
         await addDoc(collection(db, "chats", chatId, "messages"), {
             text: text,
             senderId: currentUser.uid,
             createdAt: serverTimestamp(),
-            reaction: null // Init reaction field
+            reaction: null
         });
         scrollToBottom();
     } catch (e) { console.error(e); }
