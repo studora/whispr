@@ -29,32 +29,30 @@ const msgForm = document.getElementById('message-form');
 const msgInput = document.getElementById('message-input');
 const msgContainer = document.getElementById('messages-container');
 const notifySound = document.getElementById('notify-sound');
-const headerStatus = document.getElementById('header-status'); // New status element
+const headerStatus = document.getElementById('header-status');
 
 // State
 let currentUser = null;
 let selectedUser = null;
 let messagesUnsubscribe = null;
-let statusUnsubscribe = null; // To listen to online status
+let statusUnsubscribe = null;
 let isPageVisible = true;
 
 // --- 1. HEARTBEAT SYSTEM (Online Status) ---
-// Updates "lastActive" every 2 minutes so others know I'm online
 function startHeartbeat(user) {
     // Update immediately
     updateMyStatus(user.uid);
     
-    // Then update every 2 minutes
+    // Update every 10 seconds (Faster heartbeat)
     setInterval(() => {
         updateMyStatus(user.uid);
-    }, 30000);
+    }, 10000); 
 }
 
 async function updateMyStatus(uid) {
     try {
         await setDoc(doc(db, "users", uid), {
             lastActive: serverTimestamp(),
-            // We merge so we don't overwrite name/photo
         }, { merge: true });
     } catch (e) { console.log("Heartbeat skipped"); }
 }
@@ -172,8 +170,8 @@ function monitorUserStatus(uid) {
             const currentTime = Date.now();
             const diff = currentTime - lastActiveTime;
 
-            // If active in last 3 minutes (180000 ms), consider Online
-            if (diff < 180000) {
+            // CHANGED: Check if active in last 35 seconds (35000ms)
+            if (diff < 35000) {
                 headerStatus.innerHTML = `<span class="status-dot" style="background:#4cd137"></span> Online`;
                 headerStatus.style.color = "#e0e0e0";
             } else {
@@ -228,13 +226,8 @@ function renderMessage(msg) {
 
 function notifyUser(text) {
     if (!isPageVisible) {
-        // 1. Navbar/Tab Flash
         document.title = `(1) Message | ClosedDoor`;
-
-        // 2. Sound
         try { notifySound.currentTime = 0; notifySound.play().catch(()=>{}); } catch(e){}
-
-        // 3. System Pop-up
         if (Notification.permission === "granted") {
             const n = new Notification(`New Message`, {
                 body: text,
