@@ -1,32 +1,23 @@
-/* =========================================
-   1. VARIABLES & THEME (Midnight Rose)
-   ========================================= */
 :root {
-    --bg-main: #1a0b14;      /* Deep Wine Background */
-    --bg-sidebar: #2d1221;   /* Dark Cherry Sidebar */
-    --border: #4a2438;       /* Border Color */
-    --text-main: #ffebf3;    /* Soft Pink Text */
-    --text-dim: #d4a5b8;     /* Dimmed Text */
-    --accent: #ff5e9a;       /* Hot Pink Accent */
+    --bg-main: #1a0b14;      
+    --bg-sidebar: #2d1221; 
+    --border: #4a2438;
+    --text-main: #ffebf3;
+    --text-dim: #d4a5b8;
+    --accent: #ff5e9a;
     
-    /* Message Gradients */
     --msg-sent-grad: linear-gradient(135deg, #d63384, #ff7eb3);
     --msg-rec: #3b1d2e;
     
-    /* Effects */
     --glow: 0 0 15px rgba(255, 94, 154, 0.3);
 }
 
 * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Segoe UI', sans-serif; -webkit-tap-highlight-color: transparent; }
 
-/* Use 100dvh for better mobile browser support */
 body { background-color: var(--bg-main); color: var(--text-main); height: 100vh; height: 100dvh; overflow: hidden; }
 
 .hidden { display: none !important; }
 
-/* =========================================
-   2. LOGIN SCREEN
-   ========================================= */
 #login-screen {
     height: 100%; width: 100%; position: fixed; z-index: 2000;
     display: flex; align-items: center; justify-content: center;
@@ -48,12 +39,8 @@ body { background-color: var(--bg-main); color: var(--text-main); height: 100vh;
 }
 #login-btn:hover { transform: scale(1.02); }
 
-/* =========================================
-   3. MAIN LAYOUT
-   ========================================= */
 #app { display: flex; height: 100%; width: 100%; }
 
-/* --- SIDEBAR --- */
 .sidebar {
     width: 320px; background: var(--bg-sidebar); border-right: 1px solid var(--border);
     display: flex; flex-direction: column; flex-shrink: 0; z-index: 5;
@@ -75,7 +62,6 @@ body { background-color: var(--bg-main); color: var(--text-main); height: 100vh;
 .user-info h4 { font-size: 1rem; color: #fff; margin-bottom: 3px; }
 .user-info p { font-size: 0.8rem; color: var(--text-dim); }
 
-/* --- CHAT AREA --- */
 .chat-area { flex: 1; display: flex; flex-direction: column; background: var(--bg-main); position: relative; width: 100%; }
 
 #empty-state {
@@ -86,9 +72,6 @@ body { background-color: var(--bg-main); color: var(--text-main); height: 100vh;
 
 #chat-interface { display: flex; flex-direction: column; height: 100%; width: 100%; }
 
-/* =========================================
-   4. HEADER & TYPING INDICATOR
-   ========================================= */
 .chat-header {
     padding: 10px 15px; border-bottom: 1px solid var(--border);
     background: rgba(45, 18, 33, 0.95); display: flex; align-items: center; gap: 10px;
@@ -99,14 +82,12 @@ body { background-color: var(--bg-main); color: var(--text-main); height: 100vh;
 #header-avatar { width: 38px; height: 38px; border-radius: 50%; border: 2px solid var(--accent); object-fit: cover; }
 #header-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 1rem; }
 
-/* Status Container */
 #header-status-container {
     display: flex; align-items: center; height: 20px;
 }
 .status-text { font-size: 0.8rem; color: var(--text-dim); display: flex; align-items: center; }
 .status-dot { height: 8px; width: 8px; border-radius: 50%; display: inline-block; margin-right: 5px; }
 
-/* BACK BUTTON (Default hidden on desktop) */
 #back-btn {
     display: none; 
     background: rgba(255, 255, 255, 0.1); border: none; color: white;
@@ -114,7 +95,6 @@ body { background-color: var(--bg-main); color: var(--text-main); height: 100vh;
     font-size: 1rem; cursor: pointer; align-items: center; justify-content: center;
 }
 
-/* --- DISCORD STYLE TYPING --- */
 #typing-indicator {
     display: flex; align-items: center; font-size: 0.8rem;
     color: var(--accent); font-weight: bold;
@@ -133,36 +113,29 @@ body { background-color: var(--bg-main); color: var(--text-main); height: 100vh;
     40% { transform: scale(1); opacity: 1; }
 }
 
-/* Logic to toggle between "Online" and "Typing" */
 .typing-active #header-status { display: none; }
 .typing-inactive #typing-indicator { display: none; }
 
-/* =========================================
-   5. MESSAGES & BUBBLES
-   ========================================= */
 #messages-container {
     flex: 1; overflow-y: auto; padding: 15px;
     display: flex; flex-direction: column; gap: 10px;
     
-    /* THEME IMAGE & GRADIENT OVERLAY */
-    background-color: var(--bg-main); /* Fallback */
+    background-color: var(--bg-main); 
     background-image: 
         linear-gradient(to bottom, rgba(26, 11, 20, 0.92), rgba(26, 11, 20, 0.85)),
         url('https://images.unsplash.com/photo-1550684848-fac1c5b4e853?q=80&w=2070&auto=format&fit=crop');
         
     background-size: cover;
     background-position: center;
-    background-attachment: fixed; /* Keeps image still while scrolling */
+    background-attachment: fixed;
 }
 
-/* Date Divider */
 .date-divider { text-align: center; margin: 10px 0; width: 100%; }
 .date-divider span {
     background: rgba(45, 18, 33, 0.8); padding: 4px 12px; border-radius: 20px;
     font-size: 0.75rem; color: var(--text-dim); border: 1px solid var(--border);
 }
 
-/* Message Bubble */
 .message { 
     max-width: 80%; padding: 8px 14px; border-radius: 18px; 
     font-size: 0.95rem; line-height: 1.4; position: relative; 
@@ -180,7 +153,6 @@ body { background-color: var(--bg-main); color: var(--text-main); height: 100vh;
     color: var(--text-main); border-bottom-left-radius: 2px; border: 1px solid var(--border);
 }
 
-/* QUOTED REPLY STYLE */
 .reply-quote {
     display: block;
     background: rgba(0,0,0,0.2);
@@ -194,7 +166,6 @@ body { background-color: var(--bg-main); color: var(--text-main); height: 100vh;
 }
 .reply-quote strong { color: var(--accent); margin-right: 5px; }
 
-/* HOVER ACTIONS (Reply/React Buttons) */
 .msg-actions {
     position: absolute; top: -20px; right: 0;
     background: var(--bg-sidebar); border: 1px solid var(--border);
@@ -212,7 +183,6 @@ body { background-color: var(--bg-main); color: var(--text-main); height: 100vh;
 }
 .action-btn:hover { color: var(--accent); transform: scale(1.1); }
 
-/* REACTION BADGE */
 .reaction-badge {
     position: absolute; bottom: -10px; right: -5px;
     background: var(--bg-sidebar); border: 1px solid var(--border);
@@ -221,7 +191,6 @@ body { background-color: var(--bg-main); color: var(--text-main); height: 100vh;
 }
 .message.received .reaction-badge { right: auto; left: -5px; }
 
-/* TIMESTAMP & TICKS */
 .timestamp { 
     font-size: 0.65rem; opacity: 0.8; margin-top: 4px; 
     display: flex; align-items: center; justify-content: flex-end; gap: 5px;
@@ -231,16 +200,12 @@ body { background-color: var(--bg-main); color: var(--text-main); height: 100vh;
 .tick-seen { color: #8be9fd; text-shadow: 0 0 5px rgba(139, 233, 253, 0.5); }
 .message.received .tick-icon { display: none; }
 
-/* =========================================
-   6. INPUT AREA, REPLY PREVIEW & MENUS
-   ========================================= */
 #message-form {
     display: flex; flex-direction: column;
     background: var(--bg-sidebar); border-top: 1px solid var(--border);
     position: relative; z-index: 20;
 }
 
-/* REPLY PREVIEW BANNER */
 #reply-preview {
     background: rgba(45, 18, 33, 0.95); padding: 8px 15px;
     display: flex; justify-content: space-between; align-items: center;
@@ -252,7 +217,6 @@ body { background-color: var(--bg-main); color: var(--text-main); height: 100vh;
 #reply-text { color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 #close-reply { background: none; border: none; color: var(--text-dim); cursor: pointer; padding: 5px; font-size: 1.1rem; }
 
-/* Standard Input */
 .input-wrapper {
     display: flex; gap: 8px; align-items: center; padding: 10px; width: 100%;
 }
@@ -270,7 +234,6 @@ body { background-color: var(--bg-main); color: var(--text-main); height: 100vh;
 }
 .send-btn:hover { transform: scale(1.1); background: rgba(255, 94, 154, 0.25); }
 
-/* Emoji Picker */
 #emoji-picker {
     position: absolute; bottom: 80px; left: 10px; right: 10px;
     background: var(--bg-sidebar); border: 1px solid var(--border);
@@ -280,7 +243,6 @@ body { background-color: var(--bg-main); color: var(--text-main); height: 100vh;
 .emoji-btn { font-size: 1.4rem; text-align: center; padding: 8px; cursor: pointer; transition: transform 0.1s; border-radius: 5px; }
 .emoji-btn:hover { background: rgba(255,255,255,0.1); transform: scale(1.2); }
 
-/* REACTION POPUP MENU */
 #reaction-menu {
     position: fixed; background: var(--bg-sidebar); border: 1px solid var(--border);
     padding: 8px 12px; border-radius: 50px; display: flex; gap: 12px;
@@ -289,34 +251,26 @@ body { background-color: var(--bg-main); color: var(--text-main); height: 100vh;
 #reaction-menu span { cursor: pointer; font-size: 1.5rem; transition: transform 0.2s; }
 #reaction-menu span:hover { transform: scale(1.3); }
 
-/* ANIMATIONS */
 @keyframes slideUp { from { transform: translateY(100%); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
 @keyframes popIn { from { transform: scale(0); } to { transform: scale(1); } }
 @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
 
-/* =========================================
-   7. MOBILE RESPONSIVE
-   ========================================= */
 @media (max-width: 768px) {
-    /* 1. Default Mobile State: Show Sidebar, Hide Chat */
     .sidebar { 
         width: 100vw !important; 
         display: flex; 
         border-right: none;
     }
     .chat-area { 
-        display: none; /* Completely hide chat by default */
+        display: none;
         width: 100vw !important;
         height: 100dvh;
     }
 
-    /* 2. Back Button Visible on Mobile */
     #back-btn { display: flex; }
     
-    /* 3. Hide Desktop Empty State */
     #empty-state { display: none !important; }
 
-    /* 4. Active Chat State (Triggered by JS class on Body) */
     body.mobile-chat-active .sidebar { 
         display: none; 
     }
@@ -324,8 +278,7 @@ body { background-color: var(--bg-main); color: var(--text-main); height: 100vh;
         display: flex; 
     }
     
-    /* Adjustments */
     #emoji-picker { grid-template-columns: repeat(5, 1fr); bottom: 75px; }
     .message { max-width: 85%; }
-    .msg-actions { display: flex; /* Always show actions on mobile */ }
+    .msg-actions { display: flex; }
 }
