@@ -1,6 +1,7 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-app.js";
 import { getAuth, signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-auth.js";
-import { getFirestore, collection, addDoc, query, orderBy, onSnapshot, serverTimestamp, setDoc, doc } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore.js";
+// ADDED updateDoc here
+import { getFirestore, collection, addDoc, query, orderBy, onSnapshot, serverTimestamp, setDoc, doc, updateDoc } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore.js";
 
 // --- CONFIGURATION ---
 const firebaseConfig = {
@@ -30,37 +31,56 @@ const msgInput = document.getElementById('message-input');
 const msgContainer = document.getElementById('messages-container');
 const notifySound = document.getElementById('notify-sound');
 const headerStatus = document.getElementById('header-status');
+// New DOM Elements
+const emojiToggle = document.getElementById('emoji-toggle');
+const emojiPicker = document.getElementById('emoji-picker');
 
 // State
 let currentUser = null;
 let selectedUser = null;
 let messagesUnsubscribe = null;
 let statusUnsubscribe = null;
-let statusInterval = null; // NEW: Timer for local checking
+let statusInterval = null; 
 let isPageVisible = true;
+let lastMessageDate = null; // To track date dividers
 
-// --- 1. HEARTBEAT SYSTEM (Online Status) ---
+// --- 1. EMOJI SYSTEM ---
+emojiToggle.addEventListener('click', () => {
+    emojiPicker.classList.toggle('hidden');
+});
+
+document.querySelectorAll('.emoji-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+        msgInput.value += btn.textContent;
+        msgInput.focus();
+        // Don't close picker immediately for multi-emoji spamming
+    });
+});
+
+// Close emoji picker if clicked outside
+document.addEventListener('click', (e) => {
+    if (!emojiPicker.contains(e.target) && !emojiToggle.contains(e.target)) {
+        emojiPicker.classList.add('hidden');
+    }
+});
+
+// --- 2. HEARTBEAT SYSTEM ---
 function startHeartbeat(user) {
     updateMyStatus(user.uid);
-    // Send heartbeat every 10 seconds
-    setInterval(() => {
-        updateMyStatus(user.uid);
-    }, 10000); 
+    setInterval(() => { updateMyStatus(user.uid); }, 10000); 
 }
 
 async function updateMyStatus(uid) {
     try {
-        await setDoc(doc(db, "users", uid), {
-            lastActive: serverTimestamp(),
-        }, { merge: true });
-    } catch (e) { console.log("Heartbeat skipped"); }
+        await setDoc(doc(db, "users", uid), { lastActive: serverTimestamp() }, { merge: true });
+    } catch (e) {}
 }
 
-// --- 2. VISIBILITY & NOTIFICATIONS ---
+// --- 3. VISIBILITY & PERMISSIONS ---
 document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === 'visible') {
         isPageVisible = true;
-        document.title = "ClosedDoor";
+        document.title = "LoveLine";
     } else {
         isPageVisible = false;
     }
@@ -78,9 +98,7 @@ loginBtn.addEventListener('click', async () => {
     try {
         await signInWithPopup(auth, provider);
         requestNotifyPermission();
-    } catch (error) {
-        console.error("Login Error:", error);
-    }
+    } catch (error) { console.error(error); }
 });
 
 logoutBtn.addEventListener('click', () => {
@@ -140,54 +158,38 @@ function loadUsers() {
 // --- CHAT LOGIC ---
 function selectChat(user) {
     selectedUser = user;
-    
     emptyState.classList.add('hidden');
     chatInterface.classList.remove('hidden');
     document.getElementById('header-avatar').src = user.photoURL;
     document.getElementById('header-name').textContent = user.displayName;
     
     monitorUserStatus(user.uid);
-
     const chatId = [currentUser.uid, selectedUser.uid].sort().join("_");
     loadMessages(chatId);
 }
 
-// --- REAL-TIME STATUS CHECK (FIXED) ---
+// --- STATUS CHECK ---
 function monitorUserStatus(uid) {
-    // 1. Clean up old listeners and timers
     if (statusUnsubscribe) statusUnsubscribe(); 
     if (statusInterval) clearInterval(statusInterval);
 
     const userRef = doc(db, "users", uid);
-    let lastActiveTime = 0; // Store the time locally
+    let lastActiveTime = 0; 
 
-    // 2. Listen to DB (Updates lastActiveTime variable)
     statusUnsubscribe = onSnapshot(userRef, (doc) => {
         const data = doc.data();
-        if (data && data.lastActive) {
-            lastActiveTime = data.lastActive.toDate().getTime();
-        }
-        updateUI(); // Check immediately when data arrives
+        if (data && data.lastActive) { lastActiveTime = data.lastActive.toDate().getTime(); }
+        updateUI(); 
     });
 
-    // 3. Local Timer: Re-checks every 5 seconds independent of DB updates
-    statusInterval = setInterval(() => {
-        updateUI();
-    }, 5000);
+    statusInterval = setInterval(() => { updateUI(); }, 5000);
 
     function updateUI() {
-        if (lastActiveTime === 0) {
-            headerStatus.innerHTML = "Offline";
-            return;
-        }
-
-        const currentTime = Date.now();
-        const diff = currentTime - lastActiveTime;
-
-        // If active within last 35 seconds
+        if (lastActiveTime === 0) { headerStatus.innerHTML = "Offline"; return; }
+        const diff = Date.now() - lastActiveTime;
         if (diff < 35000) {
-            headerStatus.innerHTML = `<span class="status-dot" style="background:#4cd137"></span> Online`;
-            headerStatus.style.color = "#e0e0e0";
+            headerStatus.innerHTML = `<span class="status-dot" style="background:#ff5e9a"></span> Online`;
+            headerStatus.style.color = "#ffebf3";
         } else {
             headerStatus.innerHTML = `<span class="status-dot" style="background:#666"></span> Offline`;
             headerStatus.style.color = "#666";
@@ -195,9 +197,11 @@ function monitorUserStatus(uid) {
     }
 }
 
+// --- MESSAGES WITH DATE HEADERS ---
 function loadMessages(chatId) {
     if (messagesUnsubscribe) messagesUnsubscribe();
     msgContainer.innerHTML = ''; 
+    lastMessageDate = null; // Reset date tracker
 
     const q = query(
         collection(db, "chats", chatId, "messages"), 
@@ -205,21 +209,62 @@ function loadMessages(chatId) {
     );
 
     messagesUnsubscribe = onSnapshot(q, (snapshot) => {
-        snapshot.docChanges().forEach((change) => {
-            if (change.type === "added") {
-                const msg = change.doc.data();
-                renderMessage(msg);
-                
-                if (!change.doc.metadata.hasPendingWrites && msg.senderId !== currentUser.uid) {
-                    notifyUser(msg.text);
-                }
-            }
+        // If it's a full reload (e.g. switching chats), clear container
+        // For simplicity in this logic, we often just clear and redraw 
+        // OR smartly append. Here we simple-redraw to keep dates correct easily.
+        msgContainer.innerHTML = ''; 
+        lastMessageDate = null;
+
+        snapshot.forEach((doc) => {
+            const msg = doc.data();
+            const msgId = doc.id;
+            renderMessage(msg, msgId, chatId);
         });
+
+        // Notification Logic (only for new added messages at the end)
+        const changes = snapshot.docChanges();
+        if (changes.length > 0) {
+             const lastChange = changes[changes.length - 1];
+             if (lastChange.type === 'added') {
+                 const msg = lastChange.doc.data();
+                 if (!lastChange.doc.metadata.hasPendingWrites && msg.senderId !== currentUser.uid) {
+                     notifyUser(msg.text);
+                 }
+             }
+        }
+        
         scrollToBottom();
     });
 }
 
-function renderMessage(msg) {
+// --- DATE FORMATTER ---
+function getFormattedDate(date) {
+    const today = new Date();
+    const yesterday = new Date(today);
+    yesterday.setDate(yesterday.getDate() - 1);
+
+    if (date.toDateString() === today.toDateString()) return "Today";
+    if (date.toDateString() === yesterday.toDateString()) return "Yesterday";
+    
+    return date.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+}
+
+function renderMessage(msg, msgId, chatId) {
+    // 1. Render Date Divider if day changed
+    if (msg.createdAt) {
+        const dateObj = msg.createdAt.toDate();
+        const dateStr = dateObj.toDateString();
+        
+        if (dateStr !== lastMessageDate) {
+            const divider = document.createElement('div');
+            divider.className = 'date-divider';
+            divider.innerHTML = `<span>${getFormattedDate(dateObj)}</span>`;
+            msgContainer.appendChild(divider);
+            lastMessageDate = dateStr;
+        }
+    }
+
+    // 2. Render Message
     const div = document.createElement('div');
     const isMe = msg.senderId === currentUser.uid;
     div.className = `message ${isMe ? 'sent' : 'received'}`;
@@ -230,13 +275,38 @@ function renderMessage(msg) {
         time = date.getHours() + ":" + String(date.getMinutes()).padStart(2, '0');
     }
 
-    div.innerHTML = `${msg.text}<span class="timestamp">${time}</span>`;
+    // Check for reactions
+    let reactionHtml = '';
+    if (msg.reaction) {
+        reactionHtml = `<span class="reaction-badge">❤️</span>`;
+    }
+
+    div.innerHTML = `
+        ${msg.text}
+        <span class="timestamp">${time}</span>
+        ${reactionHtml}
+    `;
+
+    // Double click to react
+    div.addEventListener('dblclick', () => toggleHeart(chatId, msgId, msg.reaction));
+
     msgContainer.appendChild(div);
+}
+
+// --- REACTION LOGIC (Firestore) ---
+async function toggleHeart(chatId, msgId, currentReaction) {
+    const msgRef = doc(db, "chats", chatId, "messages", msgId);
+    // If already hearted, remove it (set null). If not, set true.
+    const newStatus = currentReaction ? null : true;
+    
+    try {
+        await updateDoc(msgRef, { reaction: newStatus });
+    } catch (e) { console.error("Error reacting:", e); }
 }
 
 function notifyUser(text) {
     if (!isPageVisible) {
-        document.title = `(1) Message | ClosedDoor`;
+        document.title = `(1) ❤️ Message`;
         try { notifySound.currentTime = 0; notifySound.play().catch(()=>{}); } catch(e){}
         if (Notification.permission === "granted") {
             const n = new Notification(`New Message`, {
@@ -255,12 +325,14 @@ msgForm.addEventListener('submit', async (e) => {
 
     const chatId = [currentUser.uid, selectedUser.uid].sort().join("_");
     msgInput.value = '';
+    emojiPicker.classList.add('hidden'); // Close emoji picker on send
 
     try {
         await addDoc(collection(db, "chats", chatId, "messages"), {
             text: text,
             senderId: currentUser.uid,
-            createdAt: serverTimestamp()
+            createdAt: serverTimestamp(),
+            reaction: null // Init reaction field
         });
         scrollToBottom();
     } catch (e) { console.error(e); }
