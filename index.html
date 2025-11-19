@@ -3,18 +3,19 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ClosedDoor</title>
+    <title>ClosedDoor</title> <!-- Changed Name -->
     <link rel="stylesheet" href="style.css">
-    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
 </head>
 <body>
 
     <!-- LOGIN SCREEN -->
     <div id="login-screen">
         <div class="login-card">
-            <h1>ClosedDoor.</h1>
-            <p>Strictly between us.</p>
-            <button id="login-btn"><i class="fab fa-google"></i> Enter Securely</button>
+            <div class="heart-icon"><i class="fas fa-heart"></i></div>
+            <h1>ClosedDoor</h1>
+            <p>Just you and me.</p>
+            <button id="login-btn"><i class="fab fa-google"></i> Connect Hearts</button>
         </div>
     </div>
 
@@ -30,16 +31,16 @@
             </div>
             
             <div id="user-list">
-                <div class="loading">Scanning...</div>
+                <div class="loading">Looking for your buddie...</div>
             </div>
         </aside>
 
         <main class="chat-area">
             
             <div id="empty-state">
-                <div class="lock-icon"><i class="fas fa-lock"></i></div>
-                <h2>Encrypted Connection</h2>
-                <p>Select a contact to open a secure line.</p>
+                <div class="lock-icon"><i class="fas fa-heart-crack"></i></div>
+                <h2>Select a Chat</h2>
+                <p>Pick a person to chat</p>
             </div>
 
             <!-- ACTIVE CHAT INTERFACE -->
@@ -49,7 +50,6 @@
                         <img id="header-avatar" src="" alt="">
                         <div>
                             <h3 id="header-name">User</h3>
-                            <!-- Status is now dynamic -->
                             <span id="header-status" class="status-text">Loading...</span>
                         </div>
                     </div>
@@ -57,15 +57,24 @@
 
                 <div id="messages-container"></div>
 
+                <div id="emoji-picker" class="hidden">
+                    <!-- Popular Emojis -->
+                    <span class="emoji-btn">❤️</span><span class="emoji-btn">😂</span><span class="emoji-btn">😍</span>
+                    <span class="emoji-btn">😭</span><span class="emoji-btn">😡</span><span class="emoji-btn">👍</span>
+                    <span class="emoji-btn">😘</span><span class="emoji-btn">🥺</span><span class="emoji-btn">💀</span>
+                    <span class="emoji-btn">🔥</span><span class="emoji-btn">✨</span><span class="emoji-btn">🦋</span>
+                    <span class="emoji-btn">💋</span><span class="emoji-btn">🫂</span><span class="emoji-btn">💍</span>
+                </div>
+
                 <form id="message-form">
+                    <button type="button" id="emoji-toggle" class="attach-btn"><i class="far fa-smile"></i></button>
                     <input type="text" id="message-input" placeholder="Write a message..." autocomplete="off">
-                    <button type="submit" class="send-btn"><i class="fas fa-arrow-up"></i></button>
+                    <button type="submit" class="send-btn"><i class="fas fa-paper-plane"></i></button>
                 </form>
             </div>
         </main>
     </div>
     
-    <!-- Silent base64 audio -->
     <audio id="notify-sound" preload="auto" src="data:audio/mpeg;base64,//NExAAAAANIAAAAAExBTUUzLjEwMKqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq//NExAAAAANIAAAAAExBTUUzLjEwMKqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq//NExAAAAANIAAAAAExBTUUzLjEwMKqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq"></audio>
 
     <script type="module" src="script.js"></script>
