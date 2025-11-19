@@ -2,8 +2,8 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ClosedDoor</title> <!-- Changed Name -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"> <!-- vital for mobile -->
+    <title>ClosedDoor</title>
     <link rel="stylesheet" href="style.css">
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
 </head>
@@ -22,8 +22,8 @@
     <!-- MAIN APP -->
     <div id="app" class="hidden">
         
-        <!-- SIDEBAR -->
-        <aside class="sidebar">
+        <!-- SIDEBAR (User List) -->
+        <aside class="sidebar" id="sidebar-view">
             <div class="my-profile">
                 <img id="my-avatar" src="" alt="My Avatar">
                 <span id="my-name">Me</span>
@@ -35,9 +35,11 @@
             </div>
         </aside>
 
-        <main class="chat-area">
+        <!-- CHAT AREA -->
+        <main class="chat-area" id="chat-view">
             
-            <div id="empty-state">
+            <!-- Empty state is hidden on mobile via CSS usually, or covered by sidebar -->
+            <div id="empty-state" class="desktop-only">
                 <div class="lock-icon"><i class="fas fa-heart-crack"></i></div>
                 <h2>Select a Chat</h2>
                 <p>Pick a person to chat</p>
@@ -46,6 +48,9 @@
             <!-- ACTIVE CHAT INTERFACE -->
             <div id="chat-interface" class="hidden">
                 <header class="chat-header">
+                    <!-- BACK BUTTON (Mobile Only) -->
+                    <button id="back-btn" class="mobile-only"><i class="fas fa-arrow-left"></i></button>
+                    
                     <div class="chat-partner-info">
                         <img id="header-avatar" src="" alt="">
                         <div>
@@ -58,7 +63,6 @@
                 <div id="messages-container"></div>
 
                 <div id="emoji-picker" class="hidden">
-                    <!-- Popular Emojis -->
                     <span class="emoji-btn">❤️</span><span class="emoji-btn">😂</span><span class="emoji-btn">😍</span>
                     <span class="emoji-btn">😭</span><span class="emoji-btn">😡</span><span class="emoji-btn">👍</span>
                     <span class="emoji-btn">😘</span><span class="emoji-btn">🥺</span><span class="emoji-btn">💀</span>
@@ -68,7 +72,7 @@
 
                 <form id="message-form">
                     <button type="button" id="emoji-toggle" class="attach-btn"><i class="far fa-smile"></i></button>
-                    <input type="text" id="message-input" placeholder="Write a message..." autocomplete="off">
+                    <input type="text" id="message-input" placeholder="Message..." autocomplete="off">
                     <button type="submit" class="send-btn"><i class="fas fa-paper-plane"></i></button>
                 </form>
             </div>
