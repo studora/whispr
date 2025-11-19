@@ -36,14 +36,13 @@ let currentUser = null;
 let selectedUser = null;
 let messagesUnsubscribe = null;
 let statusUnsubscribe = null;
+let statusInterval = null; // NEW: Timer for local checking
 let isPageVisible = true;
 
 // --- 1. HEARTBEAT SYSTEM (Online Status) ---
 function startHeartbeat(user) {
-    // Update immediately
     updateMyStatus(user.uid);
-    
-    // Update every 10 seconds (Faster heartbeat)
+    // Send heartbeat every 10 seconds
     setInterval(() => {
         updateMyStatus(user.uid);
     }, 10000); 
@@ -98,7 +97,6 @@ onAuthStateChanged(auth, async (user) => {
         document.getElementById('my-avatar').src = user.photoURL;
         document.getElementById('my-name').textContent = user.displayName.split(' ')[0];
 
-        // Save basic info
         await setDoc(doc(db, "users", user.uid), {
             uid: user.uid,
             displayName: user.displayName,
@@ -106,9 +104,7 @@ onAuthStateChanged(auth, async (user) => {
             email: user.email
         }, { merge: true });
 
-        // Start the "I am Online" signal
         startHeartbeat(user);
-
         loadUsers();
     } else {
         currentUser = null;
@@ -150,38 +146,53 @@ function selectChat(user) {
     document.getElementById('header-avatar').src = user.photoURL;
     document.getElementById('header-name').textContent = user.displayName;
     
-    // START LISTENING TO THEIR ONLINE STATUS
     monitorUserStatus(user.uid);
 
-    // Load messages
     const chatId = [currentUser.uid, selectedUser.uid].sort().join("_");
     loadMessages(chatId);
 }
 
-// --- REAL-TIME STATUS CHECK ---
+// --- REAL-TIME STATUS CHECK (FIXED) ---
 function monitorUserStatus(uid) {
-    if (statusUnsubscribe) statusUnsubscribe(); // Stop listening to previous user
+    // 1. Clean up old listeners and timers
+    if (statusUnsubscribe) statusUnsubscribe(); 
+    if (statusInterval) clearInterval(statusInterval);
 
     const userRef = doc(db, "users", uid);
+    let lastActiveTime = 0; // Store the time locally
+
+    // 2. Listen to DB (Updates lastActiveTime variable)
     statusUnsubscribe = onSnapshot(userRef, (doc) => {
         const data = doc.data();
         if (data && data.lastActive) {
-            const lastActiveTime = data.lastActive.toDate().getTime();
-            const currentTime = Date.now();
-            const diff = currentTime - lastActiveTime;
-
-            // CHANGED: Check if active in last 35 seconds (35000ms)
-            if (diff < 35000) {
-                headerStatus.innerHTML = `<span class="status-dot" style="background:#4cd137"></span> Online`;
-                headerStatus.style.color = "#e0e0e0";
-            } else {
-                headerStatus.innerHTML = `<span class="status-dot" style="background:#666"></span> Offline`;
-                headerStatus.style.color = "#666";
-            }
-        } else {
-            headerStatus.innerHTML = "Offline";
+            lastActiveTime = data.lastActive.toDate().getTime();
         }
+        updateUI(); // Check immediately when data arrives
     });
+
+    // 3. Local Timer: Re-checks every 5 seconds independent of DB updates
+    statusInterval = setInterval(() => {
+        updateUI();
+    }, 5000);
+
+    function updateUI() {
+        if (lastActiveTime === 0) {
+            headerStatus.innerHTML = "Offline";
+            return;
+        }
+
+        const currentTime = Date.now();
+        const diff = currentTime - lastActiveTime;
+
+        // If active within last 35 seconds
+        if (diff < 35000) {
+            headerStatus.innerHTML = `<span class="status-dot" style="background:#4cd137"></span> Online`;
+            headerStatus.style.color = "#e0e0e0";
+        } else {
+            headerStatus.innerHTML = `<span class="status-dot" style="background:#666"></span> Offline`;
+            headerStatus.style.color = "#666";
+        }
+    }
 }
 
 function loadMessages(chatId) {
@@ -199,7 +210,6 @@ function loadMessages(chatId) {
                 const msg = change.doc.data();
                 renderMessage(msg);
                 
-                // NOTIFICATION
                 if (!change.doc.metadata.hasPendingWrites && msg.senderId !== currentUser.uid) {
                     notifyUser(msg.text);
                 }
