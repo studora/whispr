@@ -4,12 +4,13 @@ import { getFirestore, collection, addDoc, query, orderBy, onSnapshot, serverTim
 
 // --- 1. PASTE YOUR FIREBASE CONFIG HERE ---
 const firebaseConfig = {
-    apiKey: "YOUR_API_KEY_HERE",
-    authDomain: "YOUR_PROJECT.firebaseapp.com",
-    projectId: "YOUR_PROJECT_ID",
-    storageBucket: "YOUR_PROJECT.appspot.com",
-    messagingSenderId: "YOUR_SENDER_ID",
-    appId: "YOUR_APP_ID"
+  apiKey: "AIzaSyDKTmbeR8vxWOimsera1WmC6a5mZc_Ewkc",
+  authDomain: "closeddoor-58ac5.firebaseapp.com",
+  projectId: "closeddoor-58ac5",
+  storageBucket: "closeddoor-58ac5.firebasestorage.app",
+  messagingSenderId: "330800003542",
+  appId: "1:330800003542:web:2d02cf0d6eb01d5bdfcc77",
+  measurementId: "G-B1DJWK271Y"
 };
 
 // Initialize Firebase
