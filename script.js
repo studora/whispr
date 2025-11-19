@@ -2,7 +2,7 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/9.23.0/firebas
 import { getAuth, signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-auth.js";
 import { getFirestore, collection, addDoc, query, orderBy, onSnapshot, serverTimestamp, setDoc, doc } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore.js";
 
-// --- 1. YOUR CONFIGURATION ---
+// --- CONFIGURATION ---
 const firebaseConfig = {
   apiKey: "AIzaSyDKTmbeR8vxWOimsera1WmC6a5mZc_Ewkc",
   authDomain: "closeddoor-58ac5.firebaseapp.com",
@@ -29,24 +29,43 @@ const emptyState = document.getElementById('empty-state');
 const msgForm = document.getElementById('message-form');
 const msgInput = document.getElementById('message-input');
 const msgContainer = document.getElementById('messages-container');
+const notifySound = document.getElementById('notify-sound');
 
 // State
 let currentUser = null;
 let selectedUser = null;
 let messagesUnsubscribe = null;
+let isPageVisible = true;
+
+// --- NOTIFICATIONS & VISIBILITY ---
+
+// 1. Check if user is looking at the tab
+document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === 'visible') {
+        isPageVisible = true;
+        document.title = "ClosedDoor"; // Reset title when you come back
+    } else {
+        isPageVisible = false;
+    }
+});
+
+// 2. Request Permission
+function requestNotifyPermission() {
+    if ("Notification" in window && Notification.permission !== "granted") {
+        Notification.requestPermission();
+    }
+}
 
 // --- AUTHENTICATION ---
 loginBtn.addEventListener('click', async () => {
     const provider = new GoogleAuthProvider();
     try {
         await signInWithPopup(auth, provider);
+        // Ask for notification permission immediately after login
+        requestNotifyPermission();
     } catch (error) {
         console.error("Login Error:", error);
-        if (error.code === 'auth/unauthorized-domain') {
-            alert("Error: Domain not authorized. Go to Firebase Console > Auth > Settings > Authorized Domains.");
-        } else {
-            alert("Login Failed. Check console for details. (Turn off AdBlocker!)");
-        }
+        alert("Login failed. Turn off AdBlockers if using them.");
     }
 });
 
@@ -73,9 +92,7 @@ onAuthStateChanged(auth, async (user) => {
                 email: user.email,
                 lastActive: serverTimestamp()
             }, { merge: true });
-        } catch (e) {
-            console.error("Database Error (Check AdBlocker):", e);
-        }
+        } catch(e) { console.log("DB Error (Check AdBlocker)"); }
 
         loadUsers();
     } else {
@@ -99,15 +116,13 @@ function loadUsers() {
                     <img src="${user.photoURL}" class="user-avatar">
                     <div class="user-info">
                         <h4>${user.displayName}</h4>
-                        <p>Secure Connection</p>
+                        <p>Tap to chat</p>
                     </div>
                 `;
                 div.addEventListener('click', () => selectChat(user));
                 userListEl.appendChild(div);
             }
         });
-    }, (error) => {
-        console.error("Error loading users (Check AdBlocker):", error);
     });
 }
 
@@ -120,7 +135,6 @@ function selectChat(user) {
     document.getElementById('header-avatar').src = user.photoURL;
     document.getElementById('header-name').textContent = user.displayName;
     
-    // Alphabetical Sort ID
     const chatId = [currentUser.uid, selectedUser.uid].sort().join("_");
     loadMessages(chatId);
 }
@@ -135,9 +149,18 @@ function loadMessages(chatId) {
     );
 
     messagesUnsubscribe = onSnapshot(q, (snapshot) => {
-        msgContainer.innerHTML = '';
-        snapshot.forEach((doc) => {
-            renderMessage(doc.data());
+        // snapshot.docChanges() gives us specifically what changed (added/modified)
+        snapshot.docChanges().forEach((change) => {
+            if (change.type === "added") {
+                const msg = change.doc.data();
+                renderMessage(msg);
+                
+                // NOTIFICATION TRIGGER
+                // If it's a new message (not local write) AND not from me
+                if (!change.doc.metadata.hasPendingWrites && msg.senderId !== currentUser.uid) {
+                    notifyUser(msg.text);
+                }
+            }
         });
         scrollToBottom();
     });
@@ -158,13 +181,45 @@ function renderMessage(msg) {
     msgContainer.appendChild(div);
 }
 
+// --- NOTIFICATION SYSTEM ---
+function notifyUser(text) {
+    // Only notify if page is NOT visible (user is in another tab or minimized)
+    if (!isPageVisible) {
+        
+        // 1. Flash Tab Title
+        document.title = `(1) New Message | ClosedDoor`;
+
+        // 2. Play Sound (If allowed)
+        try {
+            notifySound.currentTime = 0;
+            notifySound.play().catch(() => {}); // Catch error if user hasn't interacted
+        } catch (e) {}
+
+        // 3. System Notification (Pop-up)
+        if (Notification.permission === "granted") {
+            const notification = new Notification(`New Message from ${selectedUser.displayName}`, {
+                body: text,
+                icon: selectedUser.photoURL,
+                silent: true // We play our own sound
+            });
+            
+            // If user clicks notification, focus the window
+            notification.onclick = () => {
+                window.focus();
+                notification.close();
+            };
+        }
+    }
+}
+
+// Send Message
 msgForm.addEventListener('submit', async (e) => {
     e.preventDefault();
     const text = msgInput.value.trim();
     if (!text || !selectedUser) return;
 
     const chatId = [currentUser.uid, selectedUser.uid].sort().join("_");
-    msgInput.value = ''; // Clear input first
+    msgInput.value = '';
 
     try {
         await addDoc(collection(db, "chats", chatId, "messages"), {
