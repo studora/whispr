@@ -85,13 +85,22 @@ body { background-color: var(--bg-main); color: var(--text-main); height: 100vh;
 
 #chat-interface { display: flex; flex-direction: column; height: 100%; }
 
+/* HEADER & TYPING INDICATOR */
 .chat-header {
     padding: 10px 15px; border-bottom: 1px solid var(--border);
     background: rgba(45, 18, 33, 0.95); display: flex; align-items: center; gap: 10px;
 }
 .chat-partner-info { display: flex; align-items: center; gap: 10px; flex: 1; }
 #header-avatar { width: 38px; height: 38px; border-radius: 50%; border: 2px solid var(--accent); }
+#header-status-container { display: flex; flex-direction: column; justify-content: center; }
 .status-dot { height: 8px; width: 8px; border-radius: 50%; display: inline-block; margin-right: 5px; }
+
+/* Typing Animation */
+#typing-indicator {
+    font-size: 0.75rem; color: var(--accent); font-style: italic;
+    animation: typingPulse 1.5s infinite;
+}
+@keyframes typingPulse { 0% { opacity: 0.3; } 50% { opacity: 1; } 100% { opacity: 0.3; } }
 
 /* BACK BUTTON (Default hidden on desktop) */
 #back-btn {
@@ -102,12 +111,11 @@ body { background-color: var(--bg-main); color: var(--text-main); height: 100vh;
 }
 
 /* =========================================
-   4. MESSAGES & TICKS
+   4. MESSAGES & FEATURES
    ========================================= */
 #messages-container {
     flex: 1; overflow-y: auto; padding: 15px;
     display: flex; flex-direction: column; gap: 15px;
-    /* Subtle Pattern */
     background-image: radial-gradient(rgba(255,255,255,0.03) 1px, transparent 0);
     background-size: 30px 30px;
 }
@@ -119,10 +127,12 @@ body { background-color: var(--bg-main); color: var(--text-main); height: 100vh;
     font-size: 0.75rem; color: var(--text-dim); border: 1px solid var(--border);
 }
 
+/* MESSAGE BUBBLE */
 .message { 
-    max-width: 80%; padding: 10px 16px; border-radius: 18px; 
+    max-width: 80%; padding: 8px 14px; border-radius: 18px; 
     font-size: 0.95rem; line-height: 1.4; position: relative; 
     box-shadow: 0 2px 5px rgba(0,0,0,0.2); user-select: none;
+    min-width: 80px; /* Ensure room for timestamp */
 }
 
 .message.sent {
@@ -135,35 +145,89 @@ body { background-color: var(--bg-main); color: var(--text-main); height: 100vh;
     color: var(--text-main); border-bottom-left-radius: 2px; border: 1px solid var(--border);
 }
 
-/* Reaction Heart */
-.reaction-badge {
-    position: absolute; bottom: -8px; right: 0;
-    background: var(--bg-main); border: 1px solid var(--border);
-    border-radius: 10px; padding: 2px 5px; font-size: 0.8rem;
-    box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+/* QUOTED REPLY STYLE */
+.reply-quote {
+    display: block;
+    background: rgba(0,0,0,0.2);
+    border-left: 3px solid rgba(255,255,255,0.5);
+    padding: 4px 8px;
+    border-radius: 4px;
+    margin-bottom: 5px;
+    font-size: 0.75rem;
+    color: rgba(255,255,255,0.9);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 
-/* --- TIMESTAMP & TICKS --- */
+/* HOVER ACTIONS (Reply/React Buttons) */
+.msg-actions {
+    position: absolute; top: -10px; right: 10px;
+    background: var(--bg-sidebar); border: 1px solid var(--border);
+    border-radius: 20px; padding: 2px;
+    display: none; gap: 5px; box-shadow: 0 2px 5px rgba(0,0,0,0.3);
+}
+.message:hover .msg-actions { display: flex; animation: fadeIn 0.2s; }
+.action-btn {
+    background: transparent; border: none; color: var(--text-dim);
+    width: 24px; height: 24px; border-radius: 50%; cursor: pointer;
+    display: flex; align-items: center; justify-content: center; font-size: 0.8rem;
+}
+.action-btn:hover { background: rgba(255,255,255,0.1); color: var(--accent); }
+
+/* REACTION BADGE */
+.reaction-badge {
+    position: absolute; bottom: -10px; right: -5px;
+    background: var(--bg-main); border: 1px solid var(--border);
+    border-radius: 10px; padding: 2px 5px; font-size: 0.8rem;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.3); z-index: 2;
+}
+
+/* TIMESTAMP & TICKS */
 .timestamp { 
     font-size: 0.65rem; opacity: 0.8; margin-top: 4px; 
     display: flex; align-items: center; justify-content: flex-end; gap: 5px;
 }
-
 .tick-icon { font-size: 0.7rem; transition: color 0.3s ease; }
-
-/* Sent (1 Tick) - Light transparent white */
 .tick-sent { color: rgba(255, 255, 255, 0.6); }
-
-/* Seen (2 Ticks) - Bright Blue */
 .tick-seen { color: #8be9fd; text-shadow: 0 0 5px rgba(139, 233, 253, 0.5); }
-
-/* Hide ticks on received messages (I don't need to see if I read my own msg) */
 .message.received .tick-icon { display: none; }
 
-
 /* =========================================
-   5. INPUT AREA & EMOJIS
+   5. INPUT AREA, REPLY PREVIEW & EMOJIS
    ========================================= */
+#message-form {
+    display: flex; flex-direction: column;
+    background: var(--bg-sidebar); border-top: 1px solid var(--border);
+}
+
+/* REPLY PREVIEW BANNER */
+#reply-preview {
+    background: rgba(45, 18, 33, 0.9); padding: 8px 15px;
+    display: flex; justify-content: space-between; align-items: center;
+    border-bottom: 1px solid var(--border); border-left: 4px solid var(--accent);
+    animation: slideUp 0.2s ease;
+}
+.reply-content { display: flex; flex-direction: column; font-size: 0.8rem; }
+.reply-title { color: var(--accent); font-weight: bold; }
+#reply-text { color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 250px; }
+#close-reply { background: none; border: none; color: var(--text-dim); cursor: pointer; }
+
+/* Standard Input */
+.input-wrapper {
+    display: flex; gap: 8px; align-items: center; padding: 10px; width: 100%;
+}
+#message-input {
+    flex: 1; padding: 12px 15px; border-radius: 25px; border: 1px solid var(--border);
+    background: rgba(0,0,0,0.2); color: white; outline: none; font-size: 16px;
+}
+.attach-btn, .send-btn {
+    background: none; border: none; color: var(--text-dim); font-size: 1.3rem; padding: 8px; cursor: pointer;
+}
+.send-btn { 
+    color: var(--accent); background: rgba(255, 94, 154, 0.1); border-radius: 50%; 
+    width: 45px; height: 45px; display: flex; align-items: center; justify-content: center; 
+}
+
+/* Emoji Picker */
 #emoji-picker {
     position: absolute; bottom: 75px; left: 10px; right: 10px;
     background: var(--bg-sidebar); border: 1px solid var(--border);
@@ -173,24 +237,19 @@ body { background-color: var(--bg-main); color: var(--text-main); height: 100vh;
 .emoji-btn { font-size: 1.5rem; text-align: center; padding: 5px; cursor: pointer; transition: transform 0.1s; }
 .emoji-btn:hover { transform: scale(1.2); }
 
-#message-form {
-    padding: 10px; display: flex; gap: 8px; align-items: center;
-    background: var(--bg-sidebar); border-top: 1px solid var(--border);
+/* REACTION POPUP MENU */
+#reaction-menu {
+    position: absolute; background: var(--bg-sidebar); border: 1px solid var(--border);
+    padding: 8px; border-radius: 30px; display: flex; gap: 8px;
+    box-shadow: 0 5px 15px rgba(0,0,0,0.5); z-index: 200; animation: popIn 0.2s ease;
 }
-#message-input {
-    flex: 1; padding: 12px 15px; border-radius: 25px; border: 1px solid var(--border);
-    background: rgba(0,0,0,0.2); color: white; outline: none; font-size: 16px; /* 16px prevents iOS zoom */
-}
-.attach-btn, .send-btn {
-    background: none; border: none; color: var(--text-dim); font-size: 1.3rem; padding: 8px; cursor: pointer;
-}
-.send-btn { 
-    color: var(--accent); background: rgba(255, 94, 154, 0.1); border-radius: 50%; 
-    width: 45px; height: 45px; display: flex; align-items: center; justify-content: center; 
-    transition: transform 0.2s;
-}
-.send-btn:hover { transform: scale(1.1); }
+#reaction-menu span { cursor: pointer; font-size: 1.4rem; transition: transform 0.2s; }
+#reaction-menu span:hover { transform: scale(1.3); }
 
+/* ANIMATIONS */
+@keyframes slideUp { from { transform: translateY(100%); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+@keyframes popIn { from { transform: scale(0); } to { transform: scale(1); } }
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
 
 /* =========================================
    6. MOBILE RESPONSIVE (STRICT VIEW MODE)
@@ -222,4 +281,7 @@ body { background-color: var(--bg-main); color: var(--text-main); height: 100vh;
     
     #emoji-picker { grid-template-columns: repeat(5, 1fr); }
     .message { max-width: 85%; }
+    
+    /* On Mobile, Actions usually appear on tap, or we leave them hidden until tap (handled by :hover simulation on touch) */
+    .message:active .msg-actions { display: flex; }
 }
