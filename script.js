@@ -17,7 +17,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-// DOM Elements
+// --- DOM ELEMENTS ---
 const loginScreen = document.getElementById('login-screen');
 const loginBtn = document.getElementById('login-btn');
 const logoutBtn = document.getElementById('logout-btn');
@@ -28,17 +28,24 @@ const msgForm = document.getElementById('message-form');
 const msgInput = document.getElementById('message-input');
 const msgContainer = document.getElementById('messages-container');
 const notifySound = document.getElementById('notify-sound');
-const headerStatus = document.getElementById('header-status');
-const typingIndicator = document.getElementById('typing-indicator'); // NEW
+
+// Header Elements
+const headerAvatar = document.getElementById('header-avatar');
+const headerName = document.getElementById('header-name');
+const headerStatusContainer = document.getElementById('header-status-container'); // Wrapper
+const headerStatus = document.getElementById('header-status'); // Online/Offline text
+const typingIndicator = document.getElementById('typing-indicator'); // The dots
+
+// Tools
 const emojiToggle = document.getElementById('emoji-toggle');
 const emojiPicker = document.getElementById('emoji-picker');
 const backBtn = document.getElementById('back-btn');
-const replyPreview = document.getElementById('reply-preview'); // NEW
-const replyText = document.getElementById('reply-text'); // NEW
-const closeReplyBtn = document.getElementById('close-reply'); // NEW
-const reactionMenu = document.getElementById('reaction-menu'); // NEW
+const replyPreview = document.getElementById('reply-preview');
+const replyText = document.getElementById('reply-text');
+const closeReplyBtn = document.getElementById('close-reply');
+const reactionMenu = document.getElementById('reaction-menu');
 
-// State
+// --- STATE ---
 let currentUser = null;
 let selectedUser = null;
 let messagesUnsubscribe = null;
@@ -46,13 +53,14 @@ let statusUnsubscribe = null;
 let statusInterval = null; 
 let isPageVisible = true;
 let lastMessageDate = null; 
-let replyTarget = null; // Stores message ID being replied to
+let replyTarget = null; 
 let typingTimeout = null;
 
 // --- MOBILE NAVIGATION ---
 backBtn.addEventListener('click', () => {
     document.body.classList.remove('mobile-chat-active');
     setTimeout(() => chatInterface.classList.add('hidden'), 300);
+    // Clean up listeners
     if (messagesUnsubscribe) messagesUnsubscribe();
     if (statusUnsubscribe) statusUnsubscribe();
     if (statusInterval) clearInterval(statusInterval);
@@ -69,59 +77,80 @@ document.querySelectorAll('.emoji-btn').forEach(btn => {
     btn.addEventListener('click', () => {
         msgInput.value += btn.textContent;
         msgInput.focus();
-        handleTyping(); // Trigger typing
+        handleTyping(); 
     });
 });
 
-// Reaction Menu Logic
+// Handle Reaction Click
 document.querySelectorAll('#reaction-menu span').forEach(span => {
     span.addEventListener('click', async () => {
         const r = span.getAttribute('data-r');
         const msgId = reactionMenu.getAttribute('data-msg-id');
         const chatId = [currentUser.uid, selectedUser.uid].sort().join("_");
         
-        await toggleHeart(chatId, msgId, r); // Using r as the specific emoji
+        await toggleHeart(chatId, msgId, r);
         reactionMenu.classList.add('hidden');
     });
 });
 
+// Close menus on outside click
 document.addEventListener('click', (e) => {
     if (!emojiPicker.contains(e.target) && !emojiToggle.contains(e.target)) emojiPicker.classList.add('hidden');
     if (!reactionMenu.contains(e.target)) reactionMenu.classList.add('hidden');
 });
 
-// --- TYPING INDICATOR LOGIC ---
+// --- TYPING INDICATOR LOGIC (FIXED) ---
+
 msgInput.addEventListener('input', handleTyping);
 
+// 1. Tell DB I am typing
 async function handleTyping() {
     if (!selectedUser) return;
     const chatId = [currentUser.uid, selectedUser.uid].sort().join("_");
     
-    // Update Firestore that I am typing
+    clearTimeout(typingTimeout);
+    
+    // Optimistic check to reduce writes
+    // (In a real app, we'd debounce this write too, but this is fine for now)
+    const chatRef = doc(db, "chats", chatId);
     try {
-        // We update a dedicated collection or field. Here we use 'users' status for simplicity or chats doc
-        const chatRef = doc(db, "chats", chatId);
         await setDoc(chatRef, { typing: { [currentUser.uid]: true } }, { merge: true });
-        
-        clearTimeout(typingTimeout);
-        typingTimeout = setTimeout(async () => {
-            await setDoc(chatRef, { typing: { [currentUser.uid]: false } }, { merge: true });
-        }, 2000); // Stop typing after 2 seconds of inactivity
     } catch(e) {}
+
+    typingTimeout = setTimeout(async () => {
+        try {
+            await setDoc(chatRef, { typing: { [currentUser.uid]: false } }, { merge: true });
+        } catch(e) {}
+    }, 2000);
 }
 
+// 2. Listen for Partner typing (Controls CSS Classes)
 function listenForTyping(chatId) {
     const chatRef = doc(db, "chats", chatId);
-    onSnapshot(chatRef, (doc) => {
-        if(doc.exists()) {
-            const data = doc.data();
-            // Check if the OTHER user is typing
-            if (data.typing && data.typing[selectedUser.uid]) {
-                typingIndicator.classList.remove('hidden');
-                headerStatus.classList.add('hidden');
+    
+    onSnapshot(chatRef, (docSnap) => {
+        if(docSnap.exists()) {
+            const data = docSnap.data();
+            
+            // Check if partner is typing
+            const isPartnerTyping = data.typing && data.typing[selectedUser.uid] === true;
+
+            if (isPartnerTyping) {
+                // Add class -> CSS hides 'Online' and shows 'Typing'
+                headerStatusContainer.classList.add('typing-active');
+                headerStatusContainer.classList.remove('typing-inactive');
+                
+                // Inject Discord Dots HTML
+                typingIndicator.innerHTML = `
+                    <div class="typing-dots">
+                        <div class="dot"></div><div class="dot"></div><div class="dot"></div>
+                    </div>
+                    typing...
+                `;
             } else {
-                typingIndicator.classList.add('hidden');
-                headerStatus.classList.remove('hidden');
+                // Remove class -> CSS shows 'Online' and hides 'Typing'
+                headerStatusContainer.classList.remove('typing-active');
+                headerStatusContainer.classList.add('typing-inactive');
             }
         }
     });
@@ -140,7 +169,7 @@ closeReplyBtn.addEventListener('click', () => {
     replyPreview.classList.add('hidden');
 });
 
-// --- HEARTBEAT ---
+// --- HEARTBEAT (Presence System) ---
 function startHeartbeat(user) {
     updateMyStatus(user.uid);
     setInterval(() => { updateMyStatus(user.uid); }, 10000); 
@@ -149,7 +178,49 @@ async function updateMyStatus(uid) {
     try { await setDoc(doc(db, "users", uid), { lastActive: serverTimestamp() }, { merge: true }); } catch (e) {}
 }
 
-// --- VISIBILITY ---
+// --- STATUS MONITORING (FIXED) ---
+function monitorUserStatus(uid) {
+    if (statusUnsubscribe) statusUnsubscribe(); 
+    if (statusInterval) clearInterval(statusInterval);
+    
+    const userRef = doc(db, "users", uid);
+    let lastActiveTime = 0; 
+
+    // Define update function separately
+    const updateStatusText = () => {
+        // Note: We ONLY update the innerHTML of #header-status here.
+        // Visibility is handled by the .typing-active class in CSS.
+        
+        if (lastActiveTime === 0) { 
+            headerStatus.innerHTML = "Offline"; 
+            headerStatus.style.color = "#666";
+            return; 
+        }
+        
+        const diff = Date.now() - lastActiveTime;
+        if (diff < 60000) { // 60 seconds threshold
+            headerStatus.innerHTML = `<span class="status-dot" style="background:#ff5e9a"></span> Online`;
+            headerStatus.style.color = "#ffebf3";
+        } else {
+            headerStatus.innerHTML = `<span class="status-dot" style="background:#666"></span> Offline`;
+            headerStatus.style.color = "#666";
+        }
+    };
+
+    // Listener for Realtime updates
+    statusUnsubscribe = onSnapshot(userRef, (doc) => {
+        const data = doc.data();
+        if (data && data.lastActive) { 
+            lastActiveTime = data.lastActive.toDate().getTime(); 
+        }
+        updateStatusText(); 
+    });
+
+    // Interval for local time calculation updates
+    statusInterval = setInterval(updateStatusText, 10000);
+}
+
+// --- VISIBILITY & NOTIFICATIONS ---
 document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === 'visible') {
         isPageVisible = true;
@@ -162,7 +233,7 @@ function requestNotifyPermission() {
     if ("Notification" in window && Notification.permission !== "granted") Notification.requestPermission();
 }
 
-// --- AUTH ---
+// --- AUTHENTICATION ---
 loginBtn.addEventListener('click', async () => {
     const provider = new GoogleAuthProvider();
     try { await signInWithPopup(auth, provider); requestNotifyPermission(); } catch (error) { console.error(error); }
@@ -186,7 +257,7 @@ onAuthStateChanged(auth, async (user) => {
     }
 });
 
-// --- USERS ---
+// --- USER LIST ---
 function loadUsers() {
     const q = query(collection(db, "users"));
     onSnapshot(q, (snapshot) => {
@@ -207,47 +278,27 @@ function loadUsers() {
     });
 }
 
-// --- CHAT SELECT ---
+// --- CHAT SELECTION ---
 function selectChat(user) {
     selectedUser = user;
     emptyState.classList.add('hidden');
     chatInterface.classList.remove('hidden');
     document.body.classList.add('mobile-chat-active');
-    document.getElementById('header-avatar').src = user.photoURL;
-    document.getElementById('header-name').textContent = user.displayName;
+    
+    headerAvatar.src = user.photoURL;
+    headerName.textContent = user.displayName;
+    
+    // Reset status container to initial state
+    headerStatusContainer.classList.remove('typing-active');
+    headerStatusContainer.classList.add('typing-inactive');
     
     const chatId = [currentUser.uid, selectedUser.uid].sort().join("_");
     monitorUserStatus(user.uid);
-    listenForTyping(chatId); // New: Listen for typing
+    listenForTyping(chatId); 
     loadMessages(chatId);
 }
 
-// --- STATUS ---
-function monitorUserStatus(uid) {
-    if (statusUnsubscribe) statusUnsubscribe(); 
-    if (statusInterval) clearInterval(statusInterval);
-    const userRef = doc(db, "users", uid);
-    let lastActiveTime = 0; 
-    statusUnsubscribe = onSnapshot(userRef, (doc) => {
-        const data = doc.data();
-        if (data && data.lastActive) { lastActiveTime = data.lastActive.toDate().getTime(); }
-        updateUI(); 
-    });
-    statusInterval = setInterval(() => { updateUI(); }, 5000);
-    function updateUI() {
-        if (lastActiveTime === 0) { headerStatus.innerHTML = "Offline"; return; }
-        const diff = Date.now() - lastActiveTime;
-        if (diff < 35000) {
-            headerStatus.innerHTML = `<span class="status-dot" style="background:#ff5e9a"></span> Online`;
-            headerStatus.style.color = "#ffebf3";
-        } else {
-            headerStatus.innerHTML = `<span class="status-dot" style="background:#666"></span> Offline`;
-            headerStatus.style.color = "#666";
-        }
-    }
-}
-
-// --- MESSAGES ---
+// --- MESSAGE HANDLING ---
 function loadMessages(chatId) {
     if (messagesUnsubscribe) messagesUnsubscribe();
     msgContainer.innerHTML = ''; 
@@ -323,7 +374,7 @@ function renderMessage(msg, msgId, chatId) {
         replyHtml = `<div class="reply-quote"><strong>${msg.replyTo.senderName}</strong>: ${msg.replyTo.text}</div>`;
     }
 
-    // Action Buttons (Reply/React) - Mobile friendly touch area
+    // Action Buttons
     const actionsHtml = `
         <div class="msg-actions">
             <button class="action-btn reply-action"><i class="fas fa-reply"></i></button>
@@ -343,8 +394,11 @@ function renderMessage(msg, msgId, chatId) {
     div.querySelector('.react-action').addEventListener('click', (e) => {
         e.stopPropagation();
         reactionMenu.classList.remove('hidden');
+        
+        // Position menu near mouse/touch
         reactionMenu.style.top = (e.clientY - 50) + 'px';
-        reactionMenu.style.left = e.clientX + 'px';
+        reactionMenu.style.left = Math.min(e.clientX, window.innerWidth - 220) + 'px'; // prevent overflow right
+        
         reactionMenu.setAttribute('data-msg-id', msgId);
     });
 
@@ -354,7 +408,7 @@ function renderMessage(msg, msgId, chatId) {
         startReply(msgId, msg.text, isMe ? "You" : selectedUser.displayName);
     });
 
-    // Double tap heart (Classic)
+    // Double tap heart
     div.addEventListener('dblclick', () => toggleHeart(chatId, msgId, msg.reaction ? null : "❤️"));
 
     msgContainer.appendChild(div);
@@ -376,6 +430,7 @@ function notifyUser(text) {
     }
 }
 
+// --- SENDING MESSAGES ---
 msgForm.addEventListener('submit', async (e) => {
     e.preventDefault();
     const text = msgInput.value.trim();
@@ -400,7 +455,7 @@ msgForm.addEventListener('submit', async (e) => {
             createdAt: serverTimestamp(),
             reaction: null,
             status: 'sent',
-            replyTo: replyData // Save reply info
+            replyTo: replyData
         });
         scrollToBottom();
     } catch (e) { console.error(e); }
