@@ -32,7 +32,7 @@ const notifySound = document.getElementById('notify-sound');
 const headerStatus = document.getElementById('header-status');
 const emojiToggle = document.getElementById('emoji-toggle');
 const emojiPicker = document.getElementById('emoji-picker');
-const backBtn = document.getElementById('back-btn'); // New Back Button
+const backBtn = document.getElementById('back-btn');
 
 // State
 let currentUser = null;
@@ -43,22 +43,22 @@ let statusInterval = null;
 let isPageVisible = true;
 let lastMessageDate = null; 
 
-// --- MOBILE NAVIGATION ---
+// --- MOBILE NAVIGATION LOGIC (CRITICAL) ---
 backBtn.addEventListener('click', () => {
-    // Hide chat, show sidebar
-    document.body.classList.remove('chat-active');
-    chatInterface.classList.add('hidden');
-    // On mobile, we don't strictly need to unhide emptyState because sidebar covers it,
-    // but good for state management.
+    // 1. Remove class to switch view back to sidebar
+    document.body.classList.remove('mobile-chat-active');
     
-    // Stop listening to real-time chat updates to save data
+    // 2. Optional: Hide chat interface slightly delayed for smoother feel, or immediately
+    chatInterface.classList.add('hidden');
+    
+    // 3. Stop listeners
     if (messagesUnsubscribe) messagesUnsubscribe();
     if (statusUnsubscribe) statusUnsubscribe();
     if (statusInterval) clearInterval(statusInterval);
     selectedUser = null;
 });
 
-// --- EMOJI SYSTEM ---
+// --- EMOJI ---
 emojiToggle.addEventListener('click', (e) => {
     e.stopPropagation();
     emojiPicker.classList.toggle('hidden');
@@ -84,9 +84,7 @@ function startHeartbeat(user) {
 }
 
 async function updateMyStatus(uid) {
-    try {
-        await setDoc(doc(db, "users", uid), { lastActive: serverTimestamp() }, { merge: true });
-    } catch (e) {}
+    try { await setDoc(doc(db, "users", uid), { lastActive: serverTimestamp() }, { merge: true }); } catch (e) {}
 }
 
 // --- VISIBILITY ---
@@ -167,16 +165,16 @@ function loadUsers() {
     });
 }
 
-// --- CHAT SELECTION (MOBILE LOGIC HERE) ---
+// --- CHAT SELECTION (TRIGGER MOBILE VIEW) ---
 function selectChat(user) {
     selectedUser = user;
     
-    // 1. UI Updates
+    // 1. Show Interface
     emptyState.classList.add('hidden');
     chatInterface.classList.remove('hidden');
     
-    // 2. MOBILE TRIGGER: Add class to body to slide chat in
-    document.body.classList.add('chat-active');
+    // 2. CRITICAL: ADD CLASS TO BODY TO TRIGGER CSS VIEW SWITCH
+    document.body.classList.add('mobile-chat-active');
 
     document.getElementById('header-avatar').src = user.photoURL;
     document.getElementById('header-name').textContent = user.displayName;
@@ -259,7 +257,6 @@ function getFormattedDate(date) {
 }
 
 function renderMessage(msg, msgId, chatId) {
-    // Date Header
     if (msg.createdAt) {
         const dateObj = msg.createdAt.toDate();
         const dateStr = dateObj.toDateString();
@@ -289,10 +286,6 @@ function renderMessage(msg, msgId, chatId) {
 
     div.innerHTML = `${msg.text}<span class="timestamp">${time}</span>${reactionHtml}`;
     div.addEventListener('dblclick', () => toggleHeart(chatId, msgId, msg.reaction));
-    
-    // Mobile support: Long press for reaction? Double tap still works on mobile usually.
-    // Adding simple tap-hold logic is complex, double-tap is standard.
-    
     msgContainer.appendChild(div);
 }
 
