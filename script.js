@@ -1,6 +1,6 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-app.js";
 import { getAuth, signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-auth.js";
-import { getFirestore, collection, addDoc, query, orderBy, onSnapshot, serverTimestamp, setDoc, doc, updateDoc } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore.js";
+import { getFirestore, collection, addDoc, query, orderBy, onSnapshot, serverTimestamp, setDoc, doc, updateDoc, where, getDocs } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore.js";
 
 // --- CONFIGURATION ---
 const firebaseConfig = {
@@ -43,15 +43,12 @@ let statusInterval = null;
 let isPageVisible = true;
 let lastMessageDate = null; 
 
-// --- MOBILE NAVIGATION LOGIC (CRITICAL) ---
+// --- MOBILE NAVIGATION ---
 backBtn.addEventListener('click', () => {
-    // 1. Remove class to switch view back to sidebar
     document.body.classList.remove('mobile-chat-active');
+    // Delay hiding interface slightly for animation smoothness, or hide immediately
+    setTimeout(() => chatInterface.classList.add('hidden'), 300);
     
-    // 2. Optional: Hide chat interface slightly delayed for smoother feel, or immediately
-    chatInterface.classList.add('hidden');
-    
-    // 3. Stop listeners
     if (messagesUnsubscribe) messagesUnsubscribe();
     if (statusUnsubscribe) statusUnsubscribe();
     if (statusInterval) clearInterval(statusInterval);
@@ -77,21 +74,26 @@ document.addEventListener('click', (e) => {
     }
 });
 
-// --- HEARTBEAT ---
+// --- HEARTBEAT (ONLINE STATUS) ---
 function startHeartbeat(user) {
     updateMyStatus(user.uid);
+    // Update every 10 seconds
     setInterval(() => { updateMyStatus(user.uid); }, 10000); 
 }
 
 async function updateMyStatus(uid) {
-    try { await setDoc(doc(db, "users", uid), { lastActive: serverTimestamp() }, { merge: true }); } catch (e) {}
+    try { 
+        await setDoc(doc(db, "users", uid), { lastActive: serverTimestamp() }, { merge: true }); 
+    } catch (e) {}
 }
 
-// --- VISIBILITY ---
+// --- VISIBILITY & MARK SEEN ---
 document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === 'visible') {
         isPageVisible = true;
         document.title = "ClosedDoor";
+        // If we are in a chat, mark pending messages as seen immediately
+        if (selectedUser) markCurrentChatSeen();
     } else {
         isPageVisible = false;
     }
@@ -103,7 +105,7 @@ function requestNotifyPermission() {
     }
 }
 
-// --- AUTH ---
+// --- AUTHENTICATION ---
 loginBtn.addEventListener('click', async () => {
     const provider = new GoogleAuthProvider();
     try {
@@ -122,6 +124,7 @@ onAuthStateChanged(auth, async (user) => {
         currentUser = user;
         loginScreen.classList.add('hidden');
         appScreen.classList.remove('hidden');
+        
         document.getElementById('my-avatar').src = user.photoURL;
         document.getElementById('my-name').textContent = user.displayName.split(' ')[0];
 
@@ -141,7 +144,7 @@ onAuthStateChanged(auth, async (user) => {
     }
 });
 
-// --- USERS ---
+// --- LOAD USERS ---
 function loadUsers() {
     const q = query(collection(db, "users"));
     onSnapshot(q, (snapshot) => {
@@ -165,16 +168,13 @@ function loadUsers() {
     });
 }
 
-// --- CHAT SELECTION (TRIGGER MOBILE VIEW) ---
+// --- CHAT SELECTION ---
 function selectChat(user) {
     selectedUser = user;
     
-    // 1. Show Interface
     emptyState.classList.add('hidden');
     chatInterface.classList.remove('hidden');
-    
-    // 2. CRITICAL: ADD CLASS TO BODY TO TRIGGER CSS VIEW SWITCH
-    document.body.classList.add('mobile-chat-active');
+    document.body.classList.add('mobile-chat-active'); // Trigger Mobile View
 
     document.getElementById('header-avatar').src = user.photoURL;
     document.getElementById('header-name').textContent = user.displayName;
@@ -213,7 +213,7 @@ function monitorUserStatus(uid) {
     }
 }
 
-// --- MESSAGES ---
+// --- MESSAGES & SEEN LOGIC ---
 function loadMessages(chatId) {
     if (messagesUnsubscribe) messagesUnsubscribe();
     msgContainer.innerHTML = ''; 
@@ -228,15 +228,26 @@ function loadMessages(chatId) {
         msgContainer.innerHTML = ''; 
         lastMessageDate = null;
 
-        snapshot.forEach((doc) => {
-            renderMessage(doc.data(), doc.id, chatId);
+        snapshot.forEach((docSnap) => {
+            const msg = docSnap.data();
+            const msgId = docSnap.id;
+            
+            renderMessage(msg, msgId, chatId);
+
+            // ** MARK AS SEEN LOGIC **
+            // If I am the receiver, the message is 'sent' (not seen yet), and I am looking at the page
+            if (msg.senderId !== currentUser.uid && msg.status === 'sent' && isPageVisible) {
+                updateDoc(docSnap.ref, { status: 'seen' });
+            }
         });
 
+        // ** NOTIFICATIONS **
         const changes = snapshot.docChanges();
         if (changes.length > 0) {
              const lastChange = changes[changes.length - 1];
              if (lastChange.type === 'added') {
                  const msg = lastChange.doc.data();
+                 // Only notify if message is new and NOT from me
                  if (!lastChange.doc.metadata.hasPendingWrites && msg.senderId !== currentUser.uid) {
                      notifyUser(msg.text);
                  }
@@ -244,6 +255,24 @@ function loadMessages(chatId) {
         }
         
         scrollToBottom();
+    });
+}
+
+// Helper to batch mark seen when tabbing back in
+async function markCurrentChatSeen() {
+    if (!currentUser || !selectedUser) return;
+    const chatId = [currentUser.uid, selectedUser.uid].sort().join("_");
+    
+    // Query for messages sent by partner that are still 'sent'
+    const q = query(
+        collection(db, "chats", chatId, "messages"),
+        where("senderId", "==", selectedUser.uid),
+        where("status", "==", "sent")
+    );
+
+    const snapshot = await getDocs(q);
+    snapshot.forEach((docSnap) => {
+        updateDoc(docSnap.ref, { status: 'seen' });
     });
 }
 
@@ -257,6 +286,7 @@ function getFormattedDate(date) {
 }
 
 function renderMessage(msg, msgId, chatId) {
+    // 1. Date Header
     if (msg.createdAt) {
         const dateObj = msg.createdAt.toDate();
         const dateStr = dateObj.toDateString();
@@ -269,6 +299,7 @@ function renderMessage(msg, msgId, chatId) {
         }
     }
 
+    // 2. Message Bubble
     const div = document.createElement('div');
     const isMe = msg.senderId === currentUser.uid;
     div.className = `message ${isMe ? 'sent' : 'received'}`;
@@ -279,22 +310,45 @@ function renderMessage(msg, msgId, chatId) {
         time = date.getHours() + ":" + String(date.getMinutes()).padStart(2, '0');
     }
 
-    let reactionHtml = '';
-    if (msg.reaction) {
-        reactionHtml = `<span class="reaction-badge">❤️</span>`;
+    // 3. Ticks Logic
+    let tickHtml = '';
+    if (isMe) {
+        // Default (Sent)
+        let tickClass = 'tick-sent'; 
+        let tickIcon = 'fa-check';
+
+        // Seen
+        if (msg.status === 'seen') {
+            tickClass = 'tick-seen';
+            tickIcon = 'fa-check-double';
+        }
+        
+        tickHtml = `<i class="fas ${tickIcon} tick-icon ${tickClass}"></i>`;
     }
 
-    div.innerHTML = `${msg.text}<span class="timestamp">${time}</span>${reactionHtml}`;
+    // 4. Reaction Logic
+    let reactionHtml = msg.reaction ? `<span class="reaction-badge">❤️</span>` : '';
+
+    div.innerHTML = `
+        ${msg.text}
+        <span class="timestamp">
+            ${time} ${tickHtml}
+        </span>
+        ${reactionHtml}
+    `;
+    
     div.addEventListener('dblclick', () => toggleHeart(chatId, msgId, msg.reaction));
     msgContainer.appendChild(div);
 }
 
+// --- REACTION LOGIC ---
 async function toggleHeart(chatId, msgId, currentReaction) {
     const msgRef = doc(db, "chats", chatId, "messages", msgId);
     const newStatus = currentReaction ? null : true;
     try { await updateDoc(msgRef, { reaction: newStatus }); } catch (e) {}
 }
 
+// --- NOTIFICATIONS ---
 function notifyUser(text) {
     if (!isPageVisible) {
         document.title = `(1) ❤️ Message`;
@@ -306,6 +360,7 @@ function notifyUser(text) {
     }
 }
 
+// --- SEND MESSAGE ---
 msgForm.addEventListener('submit', async (e) => {
     e.preventDefault();
     const text = msgInput.value.trim();
@@ -320,7 +375,8 @@ msgForm.addEventListener('submit', async (e) => {
             text: text,
             senderId: currentUser.uid,
             createdAt: serverTimestamp(),
-            reaction: null
+            reaction: null,
+            status: 'sent' // Default status
         });
         scrollToBottom();
     } catch (e) { console.error(e); }
