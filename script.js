@@ -6,6 +6,7 @@ import {
     limitToLast, onChildAdded, onChildChanged, off, get 
 } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-database.js";
 import { getMessaging, getToken, onMessage } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-messaging.js";
+
 const firebaseConfig = {
   apiKey: "AIzaSyDKTmbeR8vxWOimsera1WmC6a5mZc_Ewkc",
   authDomain: "closeddoor-58ac5.firebaseapp.com",
@@ -20,6 +21,10 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getDatabase(app); 
+const messaging = getMessaging(app);
+
+// !!! IMPORTANT: REPLACE THIS WITH YOUR KEY FROM FIREBASE CONSOLE !!!
+const VAPID_KEY = "PASTE_YOUR_GENERATED_KEY_PAIR_HERE"; 
 
 // --- DOM Elements ---
 const loginScreen = document.getElementById('login-screen');
@@ -53,28 +58,45 @@ pingSound.volume = 0.5;
 // --- State Variables ---
 let currentUser = null;
 let selectedUser = null;
-let typingListener = null;
 let isPageVisible = !document.hidden;
 let replyTarget = null; 
 let typingTimeout = null;
 let lastDateRendered = null;
-let unreadCount = 0; // Track unread messages
+let unreadCount = 0; 
 
 // Listeners Trackers
 let currentChatQuery = null;
 let onAddedListener = null;
 let onChangedListener = null;
 
-// --- VISIBILITY & NOTIFICATION LOGIC ---
+// --- NOTIFICATION LOGIC (Foreground + Background Token) ---
 
-// 1. Ask for permission on load/login
-function requestNotifyPermission() {
-    if ("Notification" in window && Notification.permission !== "granted") {
-        Notification.requestPermission();
+// 1. Request Permission & Save Token for Backend (Push)
+async function setupPushNotifications(user) {
+    try {
+        const permission = await Notification.requestPermission();
+        if (permission === "granted") {
+            // Get the unique ID for this device
+            const token = await getToken(messaging, { vapidKey: VAPID_KEY });
+            if (token) {
+                // Save token to DB so Cloud Function can find it
+                const tokenRef = ref(db, `users/${user.uid}/fcmToken`);
+                set(tokenRef, token);
+                console.log("Notification Token Saved.");
+            }
+        }
+    } catch (error) {
+        console.error("Notification permission denied:", error);
     }
+
+    // Handle foreground messages (when app is open)
+    onMessage(messaging, (payload) => {
+        // We rely on onChildAdded for UI updates, but we can log this
+        console.log("Foreground push received:", payload);
+    });
 }
 
-// 2. Handle Tab Visibility (Reset title when user comes back)
+// 2. Handle Browser Tab Title (Pink Dot)
 document.addEventListener("visibilitychange", () => {
     isPageVisible = !document.hidden;
     if (isPageVisible) {
@@ -84,28 +106,23 @@ document.addEventListener("visibilitychange", () => {
 
 function resetNotifications() {
     unreadCount = 0;
-    document.title = "ClosedDoor"; // Original Title
-    
-    // If we are in a chat, mark last message as seen immediately
-    if (selectedUser && msgContainer.lastElementChild) {
-       // Logic to mark seen handled in onChildAdded, but we can double check here
-    }
+    document.title = "ClosedDoor"; 
 }
 
-function triggerNotification(text, senderName) {
-    // 1. Play Sound
+function triggerLocalNotification(text, senderName) {
+    // Play Sound
     pingSound.play().catch(e => {}); 
 
-    // 2. Change Title (Pink Dot Simulation)
+    // Change Title
     unreadCount++;
     document.title = `🔴 (${unreadCount}) ${senderName}`;
 
-    // 3. Android/System Notification
-    if ("Notification" in window && Notification.permission === "granted") {
+    // System Notification (Desktop/Android Nav Bar when minimized)
+    if ("Notification" in window && Notification.permission === "granted" && document.hidden) {
         new Notification(`New message from ${senderName}`, {
             body: text,
-            icon: "https://cdn-icons-png.flaticon.com/512/1077/1077012.png", // Heart icon
-            tag: "closeddoor-msg" // Prevents spamming, replaces old notification
+            icon: "https://cdn-icons-png.flaticon.com/512/1077/1077012.png",
+            tag: "closeddoor-msg"
         });
     }
 }
@@ -213,7 +230,6 @@ function monitorUserStatus(uid) {
 loginBtn.addEventListener('click', async () => {
     try { 
         await signInWithPopup(auth, new GoogleAuthProvider()); 
-        requestNotifyPermission(); // Ask for notification permission
     } catch (e) { console.error(e); }
 });
 logoutBtn.addEventListener('click', () => { signOut(auth); location.reload(); });
@@ -225,9 +241,12 @@ onAuthStateChanged(auth, (user) => {
         document.getElementById('app').classList.remove('hidden');
         document.getElementById('my-avatar').src = user.photoURL;
         document.getElementById('my-name').textContent = user.displayName.split(' ')[0];
+        
         setupPresence(user);
         loadUsers();
-        requestNotifyPermission();
+        
+        // Enable Notifications
+        setupPushNotifications(user);
     } else {
         currentUser = null;
         loginScreen.classList.remove('hidden');
@@ -244,7 +263,7 @@ function loadUsers() {
             if (user.uid !== currentUser.uid) {
                 const div = document.createElement('div');
                 div.className = 'user-item';
-                div.id = `user-item-${user.uid}`; // ID for badge targeting
+                div.id = `user-item-${user.uid}`;
                 div.innerHTML = `<img src="${user.photoURL}" class="user-avatar"><div class="user-info"><h4>${user.displayName}</h4><p>Tap to chat</p></div>`;
                 div.addEventListener('click', () => selectChat(user));
                 userListEl.appendChild(div);
@@ -255,7 +274,7 @@ function loadUsers() {
 
 function selectChat(user) {
     selectedUser = user;
-    // Remove badge if it exists
+    // Remove badge
     const badge = document.querySelector(`#user-item-${user.uid} .unread-badge`);
     if(badge) badge.remove();
     
@@ -286,7 +305,7 @@ function loadMessages(chatId) {
 
     msgContainer.innerHTML = '';
     lastDateRendered = null;
-    resetNotifications(); // Reset title when entering chat
+    resetNotifications(); 
     
     currentChatQuery = query(ref(db, `chats/${chatId}/messages`), orderByChild('timestamp'), limitToLast(75));
 
@@ -296,14 +315,12 @@ function loadMessages(chatId) {
         appendSingleMessage(msg, msgId, chatId);
 
         // --- NOTIFICATION LOGIC ---
-        // If message is NOT from me
         if (msg.senderId !== currentUser.uid) {
-            
-            // Case 1: Browser is hidden/minimized -> Notify
+            // 1. If Hidden: Trigger Notification
             if (document.hidden) {
-                triggerNotification(msg.text, selectedUser.displayName);
+                triggerLocalNotification(msg.text, selectedUser.displayName);
             } 
-            // Case 2: Browser is open, marks as seen
+            // 2. If Visible: Mark as Seen immediately
             else {
                 if (msg.status !== 'seen') {
                     update(ref(db, `chats/${chatId}/messages/${msgId}`), { status: 'seen' });
