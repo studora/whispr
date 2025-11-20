@@ -1,10 +1,11 @@
-// --- IMPORTS FOR REALTIME DATABASE ---
 import { initializeApp } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-app.js";
 import { getAuth, signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-auth.js";
-// Added: onChildAdded, onChildChanged, limitToLast, off
-import { getDatabase, ref, set, push, onValue, onChildAdded, onChildChanged, serverTimestamp, query, orderByChild, limitToLast, update, onDisconnect, off } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-database.js";
+import { 
+    getDatabase, ref, set, push, onValue, serverTimestamp, 
+    query, orderByChild, update, onDisconnect, 
+    limitToLast, onChildAdded, onChildChanged, off 
+} from "https://www.gstatic.com/firebasejs/9.23.0/firebase-database.js";
 
-// --- CONFIGURATION ---
 const firebaseConfig = {
   apiKey: "AIzaSyDKTmbeR8vxWOimsera1WmC6a5mZc_Ewkc",
   authDomain: "closeddoor-58ac5.firebaseapp.com",
@@ -20,7 +21,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getDatabase(app); 
 
-// --- DOM ELEMENTS ---
+// DOM Elements
 const loginScreen = document.getElementById('login-screen');
 const loginBtn = document.getElementById('login-btn');
 const logoutBtn = document.getElementById('logout-btn');
@@ -30,16 +31,13 @@ const emptyState = document.getElementById('empty-state');
 const msgForm = document.getElementById('message-form');
 const msgInput = document.getElementById('message-input');
 const msgContainer = document.getElementById('messages-container');
-const notifySound = document.getElementById('notify-sound');
 
-// Header
 const headerAvatar = document.getElementById('header-avatar');
 const headerName = document.getElementById('header-name');
 const headerStatusContainer = document.getElementById('header-status-container');
 const headerStatus = document.getElementById('header-status');
 const typingIndicator = document.getElementById('typing-indicator');
 
-// Tools
 const emojiToggle = document.getElementById('emoji-toggle');
 const emojiPicker = document.getElementById('emoji-picker');
 const backBtn = document.getElementById('back-btn');
@@ -48,36 +46,35 @@ const replyText = document.getElementById('reply-text');
 const closeReplyBtn = document.getElementById('close-reply');
 const reactionMenu = document.getElementById('reaction-menu');
 
-// --- STATE ---
+// State Variables
 let currentUser = null;
 let selectedUser = null;
-
-// Listener References (to stop listening when switching chats)
-let currentChatRef = null; 
-let currentTypingRef = null;
-let currentStatusRef = null;
-
+let typingListener = null;
+let isPageVisible = true;
+let replyTarget = null; 
 let typingTimeout = null;
 let lastDateRendered = null;
-let replyTarget = null; 
-let isPageVisible = true;
 
-// --- UI HELPERS ---
+// Variables to track active listeners (so we can turn them off)
+let currentChatQuery = null;
+let onAddedListener = null;
+let onChangedListener = null;
+
+// --- EVENT LISTENERS ---
+
 backBtn.addEventListener('click', () => {
     document.body.classList.remove('mobile-chat-active');
     setTimeout(() => chatInterface.classList.add('hidden'), 300);
-    detachChatListeners();
+    
+    // Detach listeners when closing chat to save memory
+    if (currentChatQuery) {
+        off(currentChatQuery, 'child_added', onAddedListener);
+        off(currentChatQuery, 'child_changed', onChangedListener);
+        currentChatQuery = null;
+    }
     selectedUser = null;
 });
 
-function detachChatListeners() {
-    // IMPORTANT: Stop listening to the previous chat so messages don't mix
-    if (currentChatRef) off(currentChatRef);
-    if (currentTypingRef) off(currentTypingRef);
-    if (currentStatusRef) off(currentStatusRef);
-}
-
-// Emoji & Menus
 emojiToggle.addEventListener('click', (e) => { e.stopPropagation(); emojiPicker.classList.toggle('hidden'); });
 document.querySelectorAll('.emoji-btn').forEach(btn => {
     btn.addEventListener('click', () => { msgInput.value += btn.textContent; msgInput.focus(); handleTyping(); });
@@ -87,7 +84,7 @@ document.addEventListener('click', (e) => {
     if (!reactionMenu.contains(e.target)) reactionMenu.classList.add('hidden');
 });
 
-// Reaction Logic
+// Handle Reaction Selection
 document.querySelectorAll('#reaction-menu span').forEach(span => {
     span.addEventListener('click', async () => {
         const r = span.getAttribute('data-r');
@@ -101,7 +98,6 @@ document.querySelectorAll('#reaction-menu span').forEach(span => {
     });
 });
 
-// --- TYPING INDICATOR ---
 msgInput.addEventListener('input', handleTyping);
 
 function handleTyping() {
@@ -110,6 +106,7 @@ function handleTyping() {
     const myTypingRef = ref(db, `chats/${chatId}/typing/${currentUser.uid}`);
 
     set(myTypingRef, true);
+    
     clearTimeout(typingTimeout);
     typingTimeout = setTimeout(() => {
         set(myTypingRef, false);
@@ -117,9 +114,9 @@ function handleTyping() {
 }
 
 function listenForTyping(chatId) {
-    currentTypingRef = ref(db, `chats/${chatId}/typing/${selectedUser.uid}`);
+    const partnerTypingRef = ref(db, `chats/${chatId}/typing/${selectedUser.uid}`);
     
-    onValue(currentTypingRef, (snapshot) => {
+    onValue(partnerTypingRef, (snapshot) => {
         const isTyping = snapshot.val();
         if (isTyping) {
             headerStatusContainer.classList.add('typing-active');
@@ -132,7 +129,6 @@ function listenForTyping(chatId) {
     });
 }
 
-// --- REPLY ---
 function startReply(id, text, senderName) {
     replyTarget = { id, text, senderName };
     replyPreview.classList.remove('hidden');
@@ -141,7 +137,6 @@ function startReply(id, text, senderName) {
 }
 closeReplyBtn.addEventListener('click', () => { replyTarget = null; replyPreview.classList.add('hidden'); });
 
-// --- PRESENCE SYSTEM ---
 function setupPresence(user) {
     const userRef = ref(db, `users/${user.uid}`);
     update(userRef, {
@@ -166,8 +161,8 @@ function setupPresence(user) {
 }
 
 function monitorUserStatus(uid) {
-    currentStatusRef = ref(db, `users/${uid}/connections`);
-    onValue(currentStatusRef, (snap) => {
+    const userConnectionsRef = ref(db, `users/${uid}/connections`);
+    onValue(userConnectionsRef, (snap) => {
         if (snap.exists()) {
             headerStatus.innerHTML = `<span class="status-dot" style="background:#ff5e9a"></span> Online`;
             headerStatus.style.color = "#ffebf3";
@@ -178,7 +173,6 @@ function monitorUserStatus(uid) {
     });
 }
 
-// --- VISIBILITY ---
 document.addEventListener("visibilitychange", () => {
     isPageVisible = document.visibilityState === 'visible';
     if (isPageVisible) document.title = "ClosedDoor";
@@ -188,7 +182,6 @@ function requestNotifyPermission() {
     if ("Notification" in window && Notification.permission !== "granted") Notification.requestPermission();
 }
 
-// --- AUTH ---
 loginBtn.addEventListener('click', async () => {
     try { await signInWithPopup(auth, new GoogleAuthProvider()); requestNotifyPermission(); } catch (e) { console.error(e); }
 });
@@ -214,35 +207,21 @@ onAuthStateChanged(auth, (user) => {
 function loadUsers() {
     const usersRef = ref(db, 'users');
     onValue(usersRef, (snapshot) => {
-        if (!snapshot.exists()) {
-            userListEl.innerHTML = '<div class="loading">No other users found yet.</div>';
-            return;
-        }
         userListEl.innerHTML = '';
-        let foundCount = 0;
         snapshot.forEach((childSnap) => {
             const user = childSnap.val();
-            if (user && user.uid !== currentUser.uid) {
-                foundCount++;
+            if (user.uid !== currentUser.uid) {
                 const div = document.createElement('div');
                 div.className = 'user-item';
-                div.innerHTML = `
-                    <img src="${user.photoURL}" class="user-avatar">
-                    <div class="user-info"><h4>${user.displayName}</h4><p>Tap to chat</p></div>
-                `;
+                div.innerHTML = `<img src="${user.photoURL}" class="user-avatar"><div class="user-info"><h4>${user.displayName}</h4><p>Tap to chat</p></div>`;
                 div.addEventListener('click', () => selectChat(user));
                 userListEl.appendChild(div);
             }
         });
-        if (foundCount === 0) {
-            userListEl.innerHTML = '<div class="loading">You are the only one here. Invite someone!</div>';
-        }
     });
 }
 
 function selectChat(user) {
-    detachChatListeners(); // Clean up old chat listeners
-
     selectedUser = user;
     emptyState.classList.add('hidden');
     chatInterface.classList.remove('hidden');
@@ -259,44 +238,49 @@ function selectChat(user) {
     loadMessages(chatId);
 }
 
-// --- LOAD MESSAGES (OPTIMIZED FOR PERFORMANCE) ---
+// ============================================
+//   OPTIMIZED MESSAGE LOADING
+// ============================================
+
 function loadMessages(chatId) {
+    // 1. DETACH OLD LISTENERS (Crucial for performance)
+    if (currentChatQuery) {
+        off(currentChatQuery, 'child_added', onAddedListener);
+        off(currentChatQuery, 'child_changed', onChangedListener);
+    }
+
+    // 2. Reset UI
     msgContainer.innerHTML = '';
     lastDateRendered = null;
     
-    // LIMIT to last 500 messages to prevent browser lag on massive chats
-    currentChatRef = query(ref(db, `chats/${chatId}/messages`), orderByChild('timestamp'), limitToLast(500));
-    
-    // 1. onChildAdded: Handles new messages individually (INSTANT)
-    onChildAdded(currentChatRef, (snapshot) => {
+    // 3. Create Query (Limit to last 75 messages for speed)
+    // This prevents loading 5000 messages at once
+    currentChatQuery = query(ref(db, `chats/${chatId}/messages`), orderByChild('timestamp'), limitToLast(75));
+
+    // 4. Listen for NEW messages (or initial batch)
+    onAddedListener = onChildAdded(currentChatQuery, (snapshot) => {
         const msg = snapshot.val();
         const msgId = snapshot.key;
-        renderMessage(msg, msgId, chatId);
-        
-        // Scroll to bottom on new message
-        scrollToBottom();
+        appendSingleMessage(msg, msgId, chatId);
 
         // Mark as seen if needed
         if (msg.senderId !== currentUser.uid && msg.status !== 'seen' && isPageVisible) {
             update(ref(db, `chats/${chatId}/messages/${msgId}`), { status: 'seen' });
         }
+        
+        scrollToBottom();
     });
 
-    // 2. onChildChanged: Handles updates (Reaction/Seen) without re-rendering list
-    onChildChanged(currentChatRef, (snapshot) => {
+    // 5. Listen for CHANGES (Reactions, Seen status)
+    onChangedListener = onChildChanged(currentChatQuery, (snapshot) => {
         const msg = snapshot.val();
         const msgId = snapshot.key;
-        
-        const existingMsgEl = document.getElementById(`msg-${msgId}`);
-        if (existingMsgEl) {
-            const newEl = createMessageElement(msg, msgId, chatId);
-            msgContainer.replaceChild(newEl, existingMsgEl);
-        }
+        updateMessageElement(msg, msgId);
     });
 }
 
-function renderMessage(msg, msgId, chatId) {
-    // Date Divider Check
+function appendSingleMessage(msg, msgId, chatId) {
+    // Check Date Divider
     if (msg.timestamp) {
         const dateObj = new Date(msg.timestamp);
         const dateStr = dateObj.toDateString();
@@ -309,17 +293,32 @@ function renderMessage(msg, msgId, chatId) {
         }
     }
 
-    const el = createMessageElement(msg, msgId, chatId);
-    msgContainer.appendChild(el);
-}
-
-// Helper to create the DOM element
-function createMessageElement(msg, msgId, chatId) {
     const div = document.createElement('div');
     const isMe = msg.senderId === currentUser.uid;
     div.className = `message ${isMe ? 'sent' : 'received'}`;
     div.id = `msg-${msgId}`;
 
+    div.innerHTML = buildMessageHTML(msg, isMe);
+    attachMessageEvents(div, msg, msgId, chatId, isMe);
+
+    msgContainer.appendChild(div);
+}
+
+function updateMessageElement(msg, msgId) {
+    const div = document.getElementById(`msg-${msgId}`);
+    if (!div) return; // Message might be outside of the 75 limit
+
+    const isMe = msg.senderId === currentUser.uid;
+    
+    // Efficiently update only inner HTML
+    div.innerHTML = buildMessageHTML(msg, isMe);
+    
+    // Re-attach events (innerHTML replacement removes them)
+    const chatId = [currentUser.uid, selectedUser.uid].sort().join("_");
+    attachMessageEvents(div, msg, msgId, chatId, isMe);
+}
+
+function buildMessageHTML(msg, isMe) {
     const date = msg.timestamp ? new Date(msg.timestamp) : new Date();
     const time = date.getHours() + ":" + String(date.getMinutes()).padStart(2, '0');
 
@@ -333,7 +332,7 @@ function createMessageElement(msg, msgId, chatId) {
     let reactionHtml = msg.reaction ? `<span class="reaction-badge">${msg.reaction}</span>` : '';
     let replyHtml = msg.replyTo ? `<div class="reply-quote"><strong>${msg.replyTo.senderName}</strong>: ${msg.replyTo.text}</div>` : '';
 
-    div.innerHTML = `
+    return `
         ${replyHtml}
         ${msg.text}
         <span class="timestamp">${time} ${tickHtml}</span>
@@ -343,8 +342,9 @@ function createMessageElement(msg, msgId, chatId) {
             <button class="action-btn react-action"><i class="far fa-smile"></i></button>
         </div>
     `;
+}
 
-    // Attach Listeners
+function attachMessageEvents(div, msg, msgId, chatId, isMe) {
     div.querySelector('.react-action').addEventListener('click', (e) => {
         e.stopPropagation();
         reactionMenu.classList.remove('hidden');
@@ -362,11 +362,12 @@ function createMessageElement(msg, msgId, chatId) {
         const emoji = msg.reaction ? null : "❤️";
         update(ref(db, `chats/${chatId}/messages/${msgId}`), { reaction: emoji });
     });
-
-    return div;
 }
 
-// --- SEND MESSAGE ---
+// ============================================
+//   OPTIMISTIC SENDING (No Delay)
+// ============================================
+
 msgForm.addEventListener('submit', async (e) => {
     e.preventDefault();
     const text = msgInput.value.trim();
@@ -374,7 +375,7 @@ msgForm.addEventListener('submit', async (e) => {
 
     const chatId = [currentUser.uid, selectedUser.uid].sort().join("_");
     
-    // Instant UI Reset
+    // 1. INSTANTLY Clear UI
     msgInput.value = '';
     msgInput.focus();
     emojiPicker.classList.add('hidden');
@@ -386,9 +387,9 @@ msgForm.addEventListener('submit', async (e) => {
         replyPreview.classList.add('hidden');
     }
 
-    // Triggers onChildAdded instantly
     const newMsgRef = push(ref(db, `chats/${chatId}/messages`));
-    await set(newMsgRef, {
+    
+    set(newMsgRef, {
         text: text,
         senderId: currentUser.uid,
         timestamp: serverTimestamp(),
@@ -400,4 +401,8 @@ msgForm.addEventListener('submit', async (e) => {
     scrollToBottom();
 });
 
-function scrollToBottom() { setTimeout(() => { msgContainer.scrollTop = msgContainer.scrollHeight; }, 50); }
+function scrollToBottom() { 
+    setTimeout(() => { 
+        msgContainer.scrollTop = msgContainer.scrollHeight; 
+    }, 50); 
+}
