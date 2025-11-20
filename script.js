@@ -1,7 +1,10 @@
-// --- IMPORTS FOR REALTIME DATABASE ---
 import { initializeApp } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-app.js";
 import { getAuth, signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-auth.js";
-import { getDatabase, ref, set, push, onValue, onChildAdded, onChildChanged, serverTimestamp, query, orderByChild, limitToLast, update, onDisconnect, off } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-database.js";
+import { 
+    getDatabase, ref, set, push, onValue, serverTimestamp, 
+    query, orderByChild, update, onDisconnect, 
+    limitToLast, onChildAdded, onChildChanged, off, get, endBefore 
+} from "https://www.gstatic.com/firebasejs/9.23.0/firebase-database.js";
 import { getMessaging, getToken, onMessage } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-messaging.js";
 
 const firebaseConfig = {
@@ -20,7 +23,6 @@ const auth = getAuth(app);
 const db = getDatabase(app); 
 const messaging = getMessaging(app);
 
-// REPLACE WITH YOUR VAPID KEY
 const VAPID_KEY = "BFp2vO2DNgWDtUq4bFoBUwK0HOYaBW-SPaPDQ6io56C70_GVgfUGchmkB31mdtdwNBugcbx-bB67Fuwa-ZZZcWU"; 
 
 // --- DOM Elements ---
@@ -56,10 +58,15 @@ let currentUser = null;
 let selectedUser = null;
 let isPageVisible = !document.hidden;
 let replyTarget = null; 
-let editingMessageId = null; // Track if we are editing
+let editingMessageId = null; 
 let typingTimeout = null;
 let lastDateRendered = null;
 let unreadCount = 0; 
+
+// Pagination State
+let oldestLoadedTimestamp = null;
+let isLoadingHistory = false;
+let activeChatId = null;
 
 // Listeners Trackers
 let currentChatQuery = null;
@@ -67,7 +74,6 @@ let onAddedListener = null;
 let onChangedListener = null;
 
 // --- NOTIFICATION LOGIC ---
-
 async function setupPushNotifications(user) {
     try {
         const permission = await Notification.requestPermission();
@@ -88,9 +94,7 @@ async function setupPushNotifications(user) {
 
 document.addEventListener("visibilitychange", () => {
     isPageVisible = !document.hidden;
-    if (isPageVisible) {
-        resetNotifications();
-    }
+    if (isPageVisible) resetNotifications();
 });
 
 function resetNotifications() {
@@ -112,8 +116,15 @@ function triggerLocalNotification(text, senderName) {
     }
 }
 
-// --- EVENT LISTENERS ---
+// --- INFINITE SCROLL LISTENER ---
+msgContainer.addEventListener('scroll', () => {
+    // If scrolled to top and not currently loading
+    if (msgContainer.scrollTop === 0 && !isLoadingHistory && selectedUser) {
+        loadMoreMessages();
+    }
+});
 
+// --- EVENT LISTENERS ---
 backBtn.addEventListener('click', () => {
     document.body.classList.remove('mobile-chat-active');
     setTimeout(() => chatInterface.classList.add('hidden'), 300);
@@ -124,6 +135,7 @@ backBtn.addEventListener('click', () => {
         currentChatQuery = null;
     }
     selectedUser = null;
+    activeChatId = null;
     resetNotifications();
 });
 
@@ -174,9 +186,7 @@ function listenForTyping(chatId) {
 }
 
 function startReply(id, text, senderName) {
-    // Clear edit mode if active
     editingMessageId = null;
-    
     replyTarget = { id, text, senderName };
     replyPreview.classList.remove('hidden');
     document.querySelector('.reply-title').textContent = "Replying to...";
@@ -184,16 +194,13 @@ function startReply(id, text, senderName) {
     msgInput.focus();
 }
 
-// NEW: Start Edit Function
 function startEdit(id, text) {
-    // Clear reply mode if active
     replyTarget = null;
-    
     editingMessageId = id;
     replyPreview.classList.remove('hidden');
     document.querySelector('.reply-title').textContent = "Editing Message...";
     replyText.textContent = text;
-    msgInput.value = text; // Populate input with existing text
+    msgInput.value = text; 
     msgInput.focus();
 }
 
@@ -207,11 +214,9 @@ closeReplyBtn.addEventListener('click', () => {
 function setupPresence(user) {
     const userRef = ref(db, `users/${user.uid}`);
     update(userRef, { displayName: user.displayName, photoURL: user.photoURL, email: user.email, uid: user.uid });
-
     const myConnectionsRef = ref(db, `users/${user.uid}/connections`);
     const lastOnlineRef = ref(db, `users/${user.uid}/lastOnline`);
     const connectedRef = ref(db, '.info/connected');
-
     onValue(connectedRef, (snap) => {
         if (snap.val() === true) {
             const con = push(myConnectionsRef);
@@ -236,9 +241,7 @@ function monitorUserStatus(uid) {
 }
 
 loginBtn.addEventListener('click', async () => {
-    try { 
-        await signInWithPopup(auth, new GoogleAuthProvider()); 
-    } catch (e) { console.error(e); }
+    try { await signInWithPopup(auth, new GoogleAuthProvider()); } catch (e) { console.error(e); }
 });
 logoutBtn.addEventListener('click', () => { signOut(auth); location.reload(); });
 
@@ -249,7 +252,6 @@ onAuthStateChanged(auth, (user) => {
         document.getElementById('app').classList.remove('hidden');
         document.getElementById('my-avatar').src = user.photoURL;
         document.getElementById('my-name').textContent = user.displayName.split(' ')[0];
-        
         setupPresence(user);
         loadUsers();
         setupPushNotifications(user);
@@ -290,17 +292,14 @@ function loadUsers() {
 function listenForUnread(partnerUid) {
     const chatId = [currentUser.uid, partnerUid].sort().join("_");
     const lastMsgQuery = query(ref(db, `chats/${chatId}/messages`), orderByChild('timestamp'), limitToLast(1));
-
     onValue(lastMsgQuery, (snapshot) => {
         const userEl = document.getElementById(`user-item-${partnerUid}`);
         if (!userEl) return;
-        
         const badgeContainer = userEl.querySelector('.badge-container');
         snapshot.forEach((childSnap) => {
             const msg = childSnap.val();
             const isUnread = msg.senderId !== currentUser.uid && msg.status !== 'seen';
             const isChatting = selectedUser && selectedUser.uid === partnerUid;
-
             if (isUnread && !isChatting) {
                 badgeContainer.innerHTML = `<div class="unread-badge"></div>`;
             } else {
@@ -325,11 +324,13 @@ function selectChat(user) {
     headerStatusContainer.classList.add('typing-inactive');
     
     const chatId = [currentUser.uid, selectedUser.uid].sort().join("_");
+    activeChatId = chatId; // Set global active chat
     monitorUserStatus(user.uid);
     listenForTyping(chatId); 
     loadMessages(chatId);
 }
 
+// --- MESSAGE LOADING ---
 function loadMessages(chatId) {
     if (currentChatQuery) {
         off(currentChatQuery, 'child_added', onAddedListener);
@@ -338,13 +339,21 @@ function loadMessages(chatId) {
 
     msgContainer.innerHTML = '';
     lastDateRendered = null;
+    oldestLoadedTimestamp = null; // Reset History tracking
     resetNotifications(); 
     
+    // Load last 75 messages (Performant)
     currentChatQuery = query(ref(db, `chats/${chatId}/messages`), orderByChild('timestamp'), limitToLast(75));
 
     onAddedListener = onChildAdded(currentChatQuery, (snapshot) => {
         const msg = snapshot.val();
         const msgId = snapshot.key;
+        
+        // Track oldest timestamp for pagination
+        if (!oldestLoadedTimestamp || msg.timestamp < oldestLoadedTimestamp) {
+            oldestLoadedTimestamp = msg.timestamp;
+        }
+
         appendSingleMessage(msg, msgId, chatId);
 
         if (msg.senderId !== currentUser.uid) {
@@ -366,7 +375,58 @@ function loadMessages(chatId) {
     });
 }
 
+// --- PAGINATION: LOAD MORE HISTORY ---
+async function loadMoreMessages() {
+    if (isLoadingHistory || !oldestLoadedTimestamp || !activeChatId) return;
+    isLoadingHistory = true;
+
+    const oldHeight = msgContainer.scrollHeight; // Save current height
+
+    // Fetch 50 messages older than the current oldest
+    const historyQuery = query(
+        ref(db, `chats/${activeChatId}/messages`), 
+        orderByChild('timestamp'), 
+        endBefore(oldestLoadedTimestamp), 
+        limitToLast(50)
+    );
+
+    const snapshot = await get(historyQuery);
+    
+    if (snapshot.exists()) {
+        const messages = [];
+        snapshot.forEach(child => {
+            messages.push({ id: child.key, ...child.val() });
+        });
+
+        // Prepend messages to DOM (reverse loop to keep order)
+        // We need to handle date dividers carefully here, simplified for basic prepend
+        const fragment = document.createDocumentFragment();
+        
+        // Update oldest timestamp for next fetch
+        oldestLoadedTimestamp = messages[0].timestamp;
+
+        messages.forEach(msg => {
+            const div = document.createElement('div');
+            const isMe = msg.senderId === currentUser.uid;
+            div.className = `message ${isMe ? 'sent' : 'received'}`;
+            div.id = `msg-${msg.id}`;
+            div.innerHTML = buildMessageHTML(msg, isMe);
+            attachMessageEvents(div, msg, msg.id, activeChatId, isMe);
+            fragment.appendChild(div);
+        });
+
+        msgContainer.prepend(fragment);
+
+        // Restore Scroll Position
+        msgContainer.scrollTop = msgContainer.scrollHeight - oldHeight;
+    }
+
+    isLoadingHistory = false;
+}
+
+
 function appendSingleMessage(msg, msgId, chatId) {
+    // Date Divider Logic
     if (msg.timestamp) {
         const dateObj = new Date(msg.timestamp);
         const dateStr = dateObj.toDateString();
@@ -410,10 +470,7 @@ function buildMessageHTML(msg, isMe) {
     let reactionHtml = msg.reaction ? `<span class="reaction-badge">${msg.reaction}</span>` : '';
     let replyHtml = msg.replyTo ? `<div class="reply-quote"><strong>${msg.replyTo.senderName}</strong>: ${msg.replyTo.text}</div>` : '';
     
-    // NEW: Edit Label
     let editedHtml = msg.isEdited ? `<span class="edited-label">(edited)</span>` : '';
-
-    // NEW: Edit Action Button (only for me)
     let editActionBtn = isMe ? `<button class="action-btn edit-action"><i class="fas fa-pen"></i></button>` : '';
 
     return `
@@ -441,8 +498,6 @@ function attachMessageEvents(div, msg, msgId, chatId, isMe) {
         e.stopPropagation();
         startReply(msgId, msg.text, isMe ? "You" : selectedUser.displayName);
     });
-    
-    // NEW: Edit Listener
     if(isMe) {
         const editBtn = div.querySelector('.edit-action');
         if(editBtn) {
@@ -452,7 +507,6 @@ function attachMessageEvents(div, msg, msgId, chatId, isMe) {
             });
         }
     }
-
     div.addEventListener('dblclick', () => {
         const emoji = msg.reaction ? null : "❤️";
         update(ref(db, `chats/${chatId}/messages/${msgId}`), { reaction: emoji });
@@ -469,20 +523,12 @@ msgForm.addEventListener('submit', async (e) => {
     msgInput.focus();
     emojiPicker.classList.add('hidden');
     
-    // NEW: Check if editing
     if (editingMessageId) {
-        // Update Existing Message
         const msgRef = ref(db, `chats/${chatId}/messages/${editingMessageId}`);
-        update(msgRef, { 
-            text: text,
-            isEdited: true 
-        });
-        
-        // Reset Edit Mode
+        update(msgRef, { text: text, isEdited: true });
         editingMessageId = null;
         replyPreview.classList.add('hidden');
     } else {
-        // Normal Send
         let replyData = null;
         if (replyTarget) { replyData = replyTarget; replyTarget = null; replyPreview.classList.add('hidden'); }
 
