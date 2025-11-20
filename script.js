@@ -3,7 +3,7 @@ import { getAuth, signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChang
 import { 
     getDatabase, ref, set, push, onValue, serverTimestamp, 
     query, orderByChild, update, onDisconnect, 
-    limitToLast, onChildAdded, onChildChanged, off 
+    limitToLast, onChildAdded, onChildChanged, off, get 
 } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-database.js";
 
 const firebaseConfig = {
@@ -21,7 +21,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getDatabase(app); 
 
-// DOM Elements
+// --- DOM Elements ---
 const loginScreen = document.getElementById('login-screen');
 const loginBtn = document.getElementById('login-btn');
 const logoutBtn = document.getElementById('logout-btn');
@@ -46,19 +46,69 @@ const replyText = document.getElementById('reply-text');
 const closeReplyBtn = document.getElementById('close-reply');
 const reactionMenu = document.getElementById('reaction-menu');
 
-// State Variables
+// Create Audio for Ping
+const pingSound = new Audio("https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3");
+pingSound.volume = 0.5;
+
+// --- State Variables ---
 let currentUser = null;
 let selectedUser = null;
 let typingListener = null;
-let isPageVisible = true;
+let isPageVisible = !document.hidden;
 let replyTarget = null; 
 let typingTimeout = null;
 let lastDateRendered = null;
+let unreadCount = 0; // Track unread messages
 
-// Variables to track active listeners (so we can turn them off)
+// Listeners Trackers
 let currentChatQuery = null;
 let onAddedListener = null;
 let onChangedListener = null;
+
+// --- VISIBILITY & NOTIFICATION LOGIC ---
+
+// 1. Ask for permission on load/login
+function requestNotifyPermission() {
+    if ("Notification" in window && Notification.permission !== "granted") {
+        Notification.requestPermission();
+    }
+}
+
+// 2. Handle Tab Visibility (Reset title when user comes back)
+document.addEventListener("visibilitychange", () => {
+    isPageVisible = !document.hidden;
+    if (isPageVisible) {
+        resetNotifications();
+    }
+});
+
+function resetNotifications() {
+    unreadCount = 0;
+    document.title = "ClosedDoor"; // Original Title
+    
+    // If we are in a chat, mark last message as seen immediately
+    if (selectedUser && msgContainer.lastElementChild) {
+       // Logic to mark seen handled in onChildAdded, but we can double check here
+    }
+}
+
+function triggerNotification(text, senderName) {
+    // 1. Play Sound
+    pingSound.play().catch(e => {}); 
+
+    // 2. Change Title (Pink Dot Simulation)
+    unreadCount++;
+    document.title = `🔴 (${unreadCount}) ${senderName}`;
+
+    // 3. Android/System Notification
+    if ("Notification" in window && Notification.permission === "granted") {
+        new Notification(`New message from ${senderName}`, {
+            body: text,
+            icon: "https://cdn-icons-png.flaticon.com/512/1077/1077012.png", // Heart icon
+            tag: "closeddoor-msg" // Prevents spamming, replaces old notification
+        });
+    }
+}
 
 // --- EVENT LISTENERS ---
 
@@ -66,13 +116,13 @@ backBtn.addEventListener('click', () => {
     document.body.classList.remove('mobile-chat-active');
     setTimeout(() => chatInterface.classList.add('hidden'), 300);
     
-    // Detach listeners when closing chat to save memory
     if (currentChatQuery) {
         off(currentChatQuery, 'child_added', onAddedListener);
         off(currentChatQuery, 'child_changed', onChangedListener);
         currentChatQuery = null;
     }
     selectedUser = null;
+    resetNotifications();
 });
 
 emojiToggle.addEventListener('click', (e) => { e.stopPropagation(); emojiPicker.classList.toggle('hidden'); });
@@ -84,16 +134,13 @@ document.addEventListener('click', (e) => {
     if (!reactionMenu.contains(e.target)) reactionMenu.classList.add('hidden');
 });
 
-// Handle Reaction Selection
 document.querySelectorAll('#reaction-menu span').forEach(span => {
     span.addEventListener('click', async () => {
         const r = span.getAttribute('data-r');
         const msgId = reactionMenu.getAttribute('data-msg-id');
         const chatId = [currentUser.uid, selectedUser.uid].sort().join("_");
-        
         const msgRef = ref(db, `chats/${chatId}/messages/${msgId}`);
         update(msgRef, { reaction: r });
-        
         reactionMenu.classList.add('hidden');
     });
 });
@@ -104,18 +151,13 @@ function handleTyping() {
     if (!selectedUser) return;
     const chatId = [currentUser.uid, selectedUser.uid].sort().join("_");
     const myTypingRef = ref(db, `chats/${chatId}/typing/${currentUser.uid}`);
-
     set(myTypingRef, true);
-    
     clearTimeout(typingTimeout);
-    typingTimeout = setTimeout(() => {
-        set(myTypingRef, false);
-    }, 2000);
+    typingTimeout = setTimeout(() => { set(myTypingRef, false); }, 2000);
 }
 
 function listenForTyping(chatId) {
     const partnerTypingRef = ref(db, `chats/${chatId}/typing/${selectedUser.uid}`);
-    
     onValue(partnerTypingRef, (snapshot) => {
         const isTyping = snapshot.val();
         if (isTyping) {
@@ -139,12 +181,7 @@ closeReplyBtn.addEventListener('click', () => { replyTarget = null; replyPreview
 
 function setupPresence(user) {
     const userRef = ref(db, `users/${user.uid}`);
-    update(userRef, {
-        displayName: user.displayName,
-        photoURL: user.photoURL,
-        email: user.email,
-        uid: user.uid
-    });
+    update(userRef, { displayName: user.displayName, photoURL: user.photoURL, email: user.email, uid: user.uid });
 
     const myConnectionsRef = ref(db, `users/${user.uid}/connections`);
     const lastOnlineRef = ref(db, `users/${user.uid}/lastOnline`);
@@ -173,17 +210,11 @@ function monitorUserStatus(uid) {
     });
 }
 
-document.addEventListener("visibilitychange", () => {
-    isPageVisible = document.visibilityState === 'visible';
-    if (isPageVisible) document.title = "ClosedDoor";
-});
-
-function requestNotifyPermission() {
-    if ("Notification" in window && Notification.permission !== "granted") Notification.requestPermission();
-}
-
 loginBtn.addEventListener('click', async () => {
-    try { await signInWithPopup(auth, new GoogleAuthProvider()); requestNotifyPermission(); } catch (e) { console.error(e); }
+    try { 
+        await signInWithPopup(auth, new GoogleAuthProvider()); 
+        requestNotifyPermission(); // Ask for notification permission
+    } catch (e) { console.error(e); }
 });
 logoutBtn.addEventListener('click', () => { signOut(auth); location.reload(); });
 
@@ -194,9 +225,9 @@ onAuthStateChanged(auth, (user) => {
         document.getElementById('app').classList.remove('hidden');
         document.getElementById('my-avatar').src = user.photoURL;
         document.getElementById('my-name').textContent = user.displayName.split(' ')[0];
-        
         setupPresence(user);
         loadUsers();
+        requestNotifyPermission();
     } else {
         currentUser = null;
         loginScreen.classList.remove('hidden');
@@ -213,6 +244,7 @@ function loadUsers() {
             if (user.uid !== currentUser.uid) {
                 const div = document.createElement('div');
                 div.className = 'user-item';
+                div.id = `user-item-${user.uid}`; // ID for badge targeting
                 div.innerHTML = `<img src="${user.photoURL}" class="user-avatar"><div class="user-info"><h4>${user.displayName}</h4><p>Tap to chat</p></div>`;
                 div.addEventListener('click', () => selectChat(user));
                 userListEl.appendChild(div);
@@ -223,6 +255,10 @@ function loadUsers() {
 
 function selectChat(user) {
     selectedUser = user;
+    // Remove badge if it exists
+    const badge = document.querySelector(`#user-item-${user.uid} .unread-badge`);
+    if(badge) badge.remove();
+    
     emptyState.classList.add('hidden');
     chatInterface.classList.remove('hidden');
     document.body.classList.add('mobile-chat-active');
@@ -239,39 +275,45 @@ function selectChat(user) {
 }
 
 // ============================================
-//   OPTIMIZED MESSAGE LOADING
+//   OPTIMIZED MESSAGE LOADING + NOTIFICATIONS
 // ============================================
 
 function loadMessages(chatId) {
-    // 1. DETACH OLD LISTENERS (Crucial for performance)
     if (currentChatQuery) {
         off(currentChatQuery, 'child_added', onAddedListener);
         off(currentChatQuery, 'child_changed', onChangedListener);
     }
 
-    // 2. Reset UI
     msgContainer.innerHTML = '';
     lastDateRendered = null;
+    resetNotifications(); // Reset title when entering chat
     
-    // 3. Create Query (Limit to last 75 messages for speed)
-    // This prevents loading 5000 messages at once
     currentChatQuery = query(ref(db, `chats/${chatId}/messages`), orderByChild('timestamp'), limitToLast(75));
 
-    // 4. Listen for NEW messages (or initial batch)
     onAddedListener = onChildAdded(currentChatQuery, (snapshot) => {
         const msg = snapshot.val();
         const msgId = snapshot.key;
         appendSingleMessage(msg, msgId, chatId);
 
-        // Mark as seen if needed
-        if (msg.senderId !== currentUser.uid && msg.status !== 'seen' && isPageVisible) {
-            update(ref(db, `chats/${chatId}/messages/${msgId}`), { status: 'seen' });
+        // --- NOTIFICATION LOGIC ---
+        // If message is NOT from me
+        if (msg.senderId !== currentUser.uid) {
+            
+            // Case 1: Browser is hidden/minimized -> Notify
+            if (document.hidden) {
+                triggerNotification(msg.text, selectedUser.displayName);
+            } 
+            // Case 2: Browser is open, marks as seen
+            else {
+                if (msg.status !== 'seen') {
+                    update(ref(db, `chats/${chatId}/messages/${msgId}`), { status: 'seen' });
+                }
+            }
         }
         
         scrollToBottom();
     });
 
-    // 5. Listen for CHANGES (Reactions, Seen status)
     onChangedListener = onChildChanged(currentChatQuery, (snapshot) => {
         const msg = snapshot.val();
         const msgId = snapshot.key;
@@ -280,7 +322,6 @@ function loadMessages(chatId) {
 }
 
 function appendSingleMessage(msg, msgId, chatId) {
-    // Check Date Divider
     if (msg.timestamp) {
         const dateObj = new Date(msg.timestamp);
         const dateStr = dateObj.toDateString();
@@ -300,20 +341,14 @@ function appendSingleMessage(msg, msgId, chatId) {
 
     div.innerHTML = buildMessageHTML(msg, isMe);
     attachMessageEvents(div, msg, msgId, chatId, isMe);
-
     msgContainer.appendChild(div);
 }
 
 function updateMessageElement(msg, msgId) {
     const div = document.getElementById(`msg-${msgId}`);
-    if (!div) return; // Message might be outside of the 75 limit
-
+    if (!div) return;
     const isMe = msg.senderId === currentUser.uid;
-    
-    // Efficiently update only inner HTML
     div.innerHTML = buildMessageHTML(msg, isMe);
-    
-    // Re-attach events (innerHTML replacement removes them)
     const chatId = [currentUser.uid, selectedUser.uid].sort().join("_");
     attachMessageEvents(div, msg, msgId, chatId, isMe);
 }
@@ -321,17 +356,14 @@ function updateMessageElement(msg, msgId) {
 function buildMessageHTML(msg, isMe) {
     const date = msg.timestamp ? new Date(msg.timestamp) : new Date();
     const time = date.getHours() + ":" + String(date.getMinutes()).padStart(2, '0');
-
     let tickHtml = '';
     if (isMe) {
         let tickClass = 'tick-sent'; let tickIcon = 'fa-check';
         if (msg.status === 'seen') { tickClass = 'tick-seen'; tickIcon = 'fa-check-double'; }
         tickHtml = `<i class="fas ${tickIcon} tick-icon ${tickClass}"></i>`;
     }
-
     let reactionHtml = msg.reaction ? `<span class="reaction-badge">${msg.reaction}</span>` : '';
     let replyHtml = msg.replyTo ? `<div class="reply-quote"><strong>${msg.replyTo.senderName}</strong>: ${msg.replyTo.text}</div>` : '';
-
     return `
         ${replyHtml}
         ${msg.text}
@@ -352,43 +384,30 @@ function attachMessageEvents(div, msg, msgId, chatId, isMe) {
         reactionMenu.style.left = Math.min(e.clientX, window.innerWidth - 220) + 'px';
         reactionMenu.setAttribute('data-msg-id', msgId);
     });
-
     div.querySelector('.reply-action').addEventListener('click', (e) => {
         e.stopPropagation();
         startReply(msgId, msg.text, isMe ? "You" : selectedUser.displayName);
     });
-
     div.addEventListener('dblclick', () => {
         const emoji = msg.reaction ? null : "❤️";
         update(ref(db, `chats/${chatId}/messages/${msgId}`), { reaction: emoji });
     });
 }
 
-// ============================================
-//   OPTIMISTIC SENDING (No Delay)
-// ============================================
-
 msgForm.addEventListener('submit', async (e) => {
     e.preventDefault();
     const text = msgInput.value.trim();
     if (!text || !selectedUser) return;
-
     const chatId = [currentUser.uid, selectedUser.uid].sort().join("_");
     
-    // 1. INSTANTLY Clear UI
     msgInput.value = '';
     msgInput.focus();
     emojiPicker.classList.add('hidden');
     
     let replyData = null;
-    if (replyTarget) {
-        replyData = replyTarget;
-        replyTarget = null;
-        replyPreview.classList.add('hidden');
-    }
+    if (replyTarget) { replyData = replyTarget; replyTarget = null; replyPreview.classList.add('hidden'); }
 
     const newMsgRef = push(ref(db, `chats/${chatId}/messages`));
-    
     set(newMsgRef, {
         text: text,
         senderId: currentUser.uid,
@@ -397,12 +416,7 @@ msgForm.addEventListener('submit', async (e) => {
         reaction: null,
         replyTo: replyData
     });
-    
     scrollToBottom();
 });
 
-function scrollToBottom() { 
-    setTimeout(() => { 
-        msgContainer.scrollTop = msgContainer.scrollHeight; 
-    }, 50); 
-}
+function scrollToBottom() { setTimeout(() => { msgContainer.scrollTop = msgContainer.scrollHeight; }, 50); }
