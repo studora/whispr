@@ -5,7 +5,7 @@ import {
     query, orderByChild, update, onDisconnect, 
     limitToLast, onChildAdded, onChildChanged, off, get 
 } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-database.js";
-
+import { getMessaging, getToken, onMessage } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-messaging.js";
 const firebaseConfig = {
   apiKey: "AIzaSyDKTmbeR8vxWOimsera1WmC6a5mZc_Ewkc",
   authDomain: "closeddoor-58ac5.firebaseapp.com",
