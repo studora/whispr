@@ -64,9 +64,9 @@ let lastDateRendered = null;
 let unreadCount = 0; 
 
 // Pagination State
+let activeChatId = null;
 let oldestLoadedTimestamp = null;
 let isLoadingHistory = false;
-let activeChatId = null;
 
 // Listeners Trackers
 let currentChatQuery = null;
@@ -116,10 +116,9 @@ function triggerLocalNotification(text, senderName) {
     }
 }
 
-// --- INFINITE SCROLL LISTENER ---
+// --- SCROLL LISTENER FOR PAGINATION ---
 msgContainer.addEventListener('scroll', () => {
-    // If scrolled to top and not currently loading
-    if (msgContainer.scrollTop === 0 && !isLoadingHistory && selectedUser) {
+    if (msgContainer.scrollTop === 0 && !isLoadingHistory && activeChatId) {
         loadMoreMessages();
     }
 });
@@ -324,7 +323,7 @@ function selectChat(user) {
     headerStatusContainer.classList.add('typing-inactive');
     
     const chatId = [currentUser.uid, selectedUser.uid].sort().join("_");
-    activeChatId = chatId; // Set global active chat
+    activeChatId = chatId; // GLOBAL TRACKER
     monitorUserStatus(user.uid);
     listenForTyping(chatId); 
     loadMessages(chatId);
@@ -380,7 +379,7 @@ async function loadMoreMessages() {
     if (isLoadingHistory || !oldestLoadedTimestamp || !activeChatId) return;
     isLoadingHistory = true;
 
-    const oldHeight = msgContainer.scrollHeight; // Save current height
+    const oldHeight = msgContainer.scrollHeight; 
 
     // Fetch 50 messages older than the current oldest
     const historyQuery = query(
@@ -398,12 +397,12 @@ async function loadMoreMessages() {
             messages.push({ id: child.key, ...child.val() });
         });
 
-        // Prepend messages to DOM (reverse loop to keep order)
-        // We need to handle date dividers carefully here, simplified for basic prepend
+        // Update oldest timestamp
+        if (messages.length > 0) {
+            oldestLoadedTimestamp = messages[0].timestamp;
+        }
+
         const fragment = document.createDocumentFragment();
-        
-        // Update oldest timestamp for next fetch
-        oldestLoadedTimestamp = messages[0].timestamp;
 
         messages.forEach(msg => {
             const div = document.createElement('div');
@@ -417,16 +416,14 @@ async function loadMoreMessages() {
 
         msgContainer.prepend(fragment);
 
-        // Restore Scroll Position
+        // Maintain scroll position
         msgContainer.scrollTop = msgContainer.scrollHeight - oldHeight;
     }
 
     isLoadingHistory = false;
 }
 
-
 function appendSingleMessage(msg, msgId, chatId) {
-    // Date Divider Logic
     if (msg.timestamp) {
         const dateObj = new Date(msg.timestamp);
         const dateStr = dateObj.toDateString();
