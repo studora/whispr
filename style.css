@@ -1,3 +1,6 @@
+/* =========================================
+   1. VARIABLES & THEME (Midnight Rose)
+   ========================================= */
 :root {
     --bg-main: #1a0b14;      
     --bg-sidebar: #2d1221; 
@@ -56,11 +59,26 @@ body { background-color: var(--bg-main); color: var(--text-main); height: 100vh;
 .user-item {
     display: flex; align-items: center; gap: 15px; padding: 15px 20px;
     cursor: pointer; border-bottom: 1px solid rgba(255,255,255,0.03); transition: background 0.2s;
+    position: relative; /* Needed for unread badge */
 }
 .user-item:hover, .user-item:active { background: rgba(255, 94, 154, 0.1); }
 .user-avatar { width: 45px; height: 45px; border-radius: 50%; object-fit: cover; }
 .user-info h4 { font-size: 1rem; color: #fff; margin-bottom: 3px; }
 .user-info p { font-size: 0.8rem; color: var(--text-dim); }
+
+/* UNREAD BADGE (Pink Dot) */
+.unread-badge {
+    position: absolute;
+    top: 15px;
+    right: 15px;
+    width: 12px;
+    height: 12px;
+    background-color: #ff0055;
+    border-radius: 50%;
+    border: 2px solid #2d1221; /* Matches sidebar bg for "cutout" effect */
+    box-shadow: 0 0 5px rgba(255, 0, 85, 0.5);
+    animation: popIn 0.3s ease;
+}
 
 .chat-area { flex: 1; display: flex; flex-direction: column; background: var(--bg-main); position: relative; width: 100%; }
 
