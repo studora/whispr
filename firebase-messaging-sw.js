@@ -16,15 +16,14 @@ const firebaseConfig = {
 firebase.initializeApp(firebaseConfig);
 const messaging = firebase.messaging();
 
-// This handles the notification when the app is completely closed
 messaging.onBackgroundMessage((payload) => {
-  console.log('[firebase-messaging-sw.js] Received background message ', payload);
+  console.log('Received background message ', payload);
   
   const notificationTitle = payload.notification.title;
   const notificationOptions = {
     body: payload.notification.body,
-    icon: '/favicon.ico', //favicon.ico
-    tag: 'closeddoor-push'
+    icon: payload.notification.icon || 'https://cdn-icons-png.flaticon.com/512/1077/1077012.png',
+    click_action: "https://closeddoor-58ac5.web.app" 
   };
 
   self.registration.showNotification(notificationTitle, notificationOptions);
