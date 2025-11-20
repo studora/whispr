@@ -1,10 +1,7 @@
+// --- IMPORTS FOR REALTIME DATABASE ---
 import { initializeApp } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-app.js";
 import { getAuth, signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-auth.js";
-import { 
-    getDatabase, ref, set, push, onValue, serverTimestamp, 
-    query, orderByChild, update, onDisconnect, 
-    limitToLast, onChildAdded, onChildChanged, off, get 
-} from "https://www.gstatic.com/firebasejs/9.23.0/firebase-database.js";
+import { getDatabase, ref, set, push, onValue, onChildAdded, onChildChanged, serverTimestamp, query, orderByChild, limitToLast, update, onDisconnect, off } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-database.js";
 import { getMessaging, getToken, onMessage } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-messaging.js";
 
 const firebaseConfig = {
@@ -23,7 +20,7 @@ const auth = getAuth(app);
 const db = getDatabase(app); 
 const messaging = getMessaging(app);
 
-// !!! IMPORTANT: REPLACE THIS WITH YOUR KEY FROM FIREBASE CONSOLE !!!
+// REPLACE WITH YOUR VAPID KEY
 const VAPID_KEY = "BFp2vO2DNgWDtUq4bFoBUwK0HOYaBW-SPaPDQ6io56C70_GVgfUGchmkB31mdtdwNBugcbx-bB67Fuwa-ZZZcWU"; 
 
 // --- DOM Elements ---
@@ -51,7 +48,6 @@ const replyText = document.getElementById('reply-text');
 const closeReplyBtn = document.getElementById('close-reply');
 const reactionMenu = document.getElementById('reaction-menu');
 
-// Create Audio for Ping
 const pingSound = new Audio("https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3");
 pingSound.volume = 0.5;
 
@@ -60,6 +56,7 @@ let currentUser = null;
 let selectedUser = null;
 let isPageVisible = !document.hidden;
 let replyTarget = null; 
+let editingMessageId = null; // Track if we are editing
 let typingTimeout = null;
 let lastDateRendered = null;
 let unreadCount = 0; 
@@ -69,34 +66,26 @@ let currentChatQuery = null;
 let onAddedListener = null;
 let onChangedListener = null;
 
-// --- NOTIFICATION LOGIC (Foreground + Background Token) ---
+// --- NOTIFICATION LOGIC ---
 
-// 1. Request Permission & Save Token for Backend (Push)
 async function setupPushNotifications(user) {
     try {
         const permission = await Notification.requestPermission();
         if (permission === "granted") {
-            // Get the unique ID for this device
             const token = await getToken(messaging, { vapidKey: VAPID_KEY });
             if (token) {
-                // Save token to DB so Cloud Function can find it
                 const tokenRef = ref(db, `users/${user.uid}/fcmToken`);
                 set(tokenRef, token);
-                console.log("Notification Token Saved.");
             }
         }
     } catch (error) {
         console.error("Notification permission denied:", error);
     }
-
-    // Handle foreground messages (when app is open)
     onMessage(messaging, (payload) => {
-        // We rely on onChildAdded for UI updates, but we can log this
         console.log("Foreground push received:", payload);
     });
 }
 
-// 2. Handle Browser Tab Title (Pink Dot)
 document.addEventListener("visibilitychange", () => {
     isPageVisible = !document.hidden;
     if (isPageVisible) {
@@ -110,14 +99,10 @@ function resetNotifications() {
 }
 
 function triggerLocalNotification(text, senderName) {
-    // Play Sound
     pingSound.play().catch(e => {}); 
-
-    // Change Title
     unreadCount++;
     document.title = `🔴 (${unreadCount}) ${senderName}`;
 
-    // System Notification (Desktop/Android Nav Bar when minimized)
     if ("Notification" in window && Notification.permission === "granted" && document.hidden) {
         new Notification(`New message from ${senderName}`, {
             body: text,
@@ -189,12 +174,35 @@ function listenForTyping(chatId) {
 }
 
 function startReply(id, text, senderName) {
+    // Clear edit mode if active
+    editingMessageId = null;
+    
     replyTarget = { id, text, senderName };
     replyPreview.classList.remove('hidden');
+    document.querySelector('.reply-title').textContent = "Replying to...";
     replyText.textContent = text;
     msgInput.focus();
 }
-closeReplyBtn.addEventListener('click', () => { replyTarget = null; replyPreview.classList.add('hidden'); });
+
+// NEW: Start Edit Function
+function startEdit(id, text) {
+    // Clear reply mode if active
+    replyTarget = null;
+    
+    editingMessageId = id;
+    replyPreview.classList.remove('hidden');
+    document.querySelector('.reply-title').textContent = "Editing Message...";
+    replyText.textContent = text;
+    msgInput.value = text; // Populate input with existing text
+    msgInput.focus();
+}
+
+closeReplyBtn.addEventListener('click', () => { 
+    replyTarget = null; 
+    editingMessageId = null;
+    msgInput.value = '';
+    replyPreview.classList.add('hidden'); 
+});
 
 function setupPresence(user) {
     const userRef = ref(db, `users/${user.uid}`);
@@ -244,8 +252,6 @@ onAuthStateChanged(auth, (user) => {
         
         setupPresence(user);
         loadUsers();
-        
-        // Enable Notifications
         setupPushNotifications(user);
     } else {
         currentUser = null;
@@ -257,16 +263,48 @@ onAuthStateChanged(auth, (user) => {
 function loadUsers() {
     const usersRef = ref(db, 'users');
     onValue(usersRef, (snapshot) => {
+        if (!snapshot.exists()) {
+            userListEl.innerHTML = '<div class="loading">No other users found yet.</div>';
+            return;
+        }
         userListEl.innerHTML = '';
         snapshot.forEach((childSnap) => {
             const user = childSnap.val();
-            if (user.uid !== currentUser.uid) {
+            if (user && user.uid !== currentUser.uid) {
                 const div = document.createElement('div');
                 div.className = 'user-item';
                 div.id = `user-item-${user.uid}`;
-                div.innerHTML = `<img src="${user.photoURL}" class="user-avatar"><div class="user-info"><h4>${user.displayName}</h4><p>Tap to chat</p></div>`;
+                div.innerHTML = `
+                    <img src="${user.photoURL}" class="user-avatar">
+                    <div class="user-info"><h4>${user.displayName}</h4><p>Tap to chat</p></div>
+                    <div class="badge-container"></div>
+                `;
                 div.addEventListener('click', () => selectChat(user));
                 userListEl.appendChild(div);
+                listenForUnread(user.uid);
+            }
+        });
+    });
+}
+
+function listenForUnread(partnerUid) {
+    const chatId = [currentUser.uid, partnerUid].sort().join("_");
+    const lastMsgQuery = query(ref(db, `chats/${chatId}/messages`), orderByChild('timestamp'), limitToLast(1));
+
+    onValue(lastMsgQuery, (snapshot) => {
+        const userEl = document.getElementById(`user-item-${partnerUid}`);
+        if (!userEl) return;
+        
+        const badgeContainer = userEl.querySelector('.badge-container');
+        snapshot.forEach((childSnap) => {
+            const msg = childSnap.val();
+            const isUnread = msg.senderId !== currentUser.uid && msg.status !== 'seen';
+            const isChatting = selectedUser && selectedUser.uid === partnerUid;
+
+            if (isUnread && !isChatting) {
+                badgeContainer.innerHTML = `<div class="unread-badge"></div>`;
+            } else {
+                badgeContainer.innerHTML = '';
             }
         });
     });
@@ -274,7 +312,6 @@ function loadUsers() {
 
 function selectChat(user) {
     selectedUser = user;
-    // Remove badge
     const badge = document.querySelector(`#user-item-${user.uid} .unread-badge`);
     if(badge) badge.remove();
     
@@ -293,10 +330,6 @@ function selectChat(user) {
     loadMessages(chatId);
 }
 
-// ============================================
-//   OPTIMIZED MESSAGE LOADING + NOTIFICATIONS
-// ============================================
-
 function loadMessages(chatId) {
     if (currentChatQuery) {
         off(currentChatQuery, 'child_added', onAddedListener);
@@ -314,20 +347,15 @@ function loadMessages(chatId) {
         const msgId = snapshot.key;
         appendSingleMessage(msg, msgId, chatId);
 
-        // --- NOTIFICATION LOGIC ---
         if (msg.senderId !== currentUser.uid) {
-            // 1. If Hidden: Trigger Notification
             if (document.hidden) {
                 triggerLocalNotification(msg.text, selectedUser.displayName);
-            } 
-            // 2. If Visible: Mark as Seen immediately
-            else {
+            } else {
                 if (msg.status !== 'seen') {
                     update(ref(db, `chats/${chatId}/messages/${msgId}`), { status: 'seen' });
                 }
             }
         }
-        
         scrollToBottom();
     });
 
@@ -381,12 +409,20 @@ function buildMessageHTML(msg, isMe) {
     }
     let reactionHtml = msg.reaction ? `<span class="reaction-badge">${msg.reaction}</span>` : '';
     let replyHtml = msg.replyTo ? `<div class="reply-quote"><strong>${msg.replyTo.senderName}</strong>: ${msg.replyTo.text}</div>` : '';
+    
+    // NEW: Edit Label
+    let editedHtml = msg.isEdited ? `<span class="edited-label">(edited)</span>` : '';
+
+    // NEW: Edit Action Button (only for me)
+    let editActionBtn = isMe ? `<button class="action-btn edit-action"><i class="fas fa-pen"></i></button>` : '';
+
     return `
         ${replyHtml}
-        ${msg.text}
+        ${msg.text} ${editedHtml}
         <span class="timestamp">${time} ${tickHtml}</span>
         ${reactionHtml}
         <div class="msg-actions">
+            ${editActionBtn}
             <button class="action-btn reply-action"><i class="fas fa-reply"></i></button>
             <button class="action-btn react-action"><i class="far fa-smile"></i></button>
         </div>
@@ -405,6 +441,18 @@ function attachMessageEvents(div, msg, msgId, chatId, isMe) {
         e.stopPropagation();
         startReply(msgId, msg.text, isMe ? "You" : selectedUser.displayName);
     });
+    
+    // NEW: Edit Listener
+    if(isMe) {
+        const editBtn = div.querySelector('.edit-action');
+        if(editBtn) {
+            editBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                startEdit(msgId, msg.text);
+            });
+        }
+    }
+
     div.addEventListener('dblclick', () => {
         const emoji = msg.reaction ? null : "❤️";
         update(ref(db, `chats/${chatId}/messages/${msgId}`), { reaction: emoji });
@@ -421,19 +469,35 @@ msgForm.addEventListener('submit', async (e) => {
     msgInput.focus();
     emojiPicker.classList.add('hidden');
     
-    let replyData = null;
-    if (replyTarget) { replyData = replyTarget; replyTarget = null; replyPreview.classList.add('hidden'); }
+    // NEW: Check if editing
+    if (editingMessageId) {
+        // Update Existing Message
+        const msgRef = ref(db, `chats/${chatId}/messages/${editingMessageId}`);
+        update(msgRef, { 
+            text: text,
+            isEdited: true 
+        });
+        
+        // Reset Edit Mode
+        editingMessageId = null;
+        replyPreview.classList.add('hidden');
+    } else {
+        // Normal Send
+        let replyData = null;
+        if (replyTarget) { replyData = replyTarget; replyTarget = null; replyPreview.classList.add('hidden'); }
 
-    const newMsgRef = push(ref(db, `chats/${chatId}/messages`));
-    set(newMsgRef, {
-        text: text,
-        senderId: currentUser.uid,
-        timestamp: serverTimestamp(),
-        status: 'sent',
-        reaction: null,
-        replyTo: replyData
-    });
-    scrollToBottom();
+        const newMsgRef = push(ref(db, `chats/${chatId}/messages`));
+        set(newMsgRef, {
+            text: text,
+            senderId: currentUser.uid,
+            timestamp: serverTimestamp(),
+            status: 'sent',
+            reaction: null,
+            replyTo: replyData,
+            isEdited: false
+        });
+        scrollToBottom();
+    }
 });
 
 function scrollToBottom() { setTimeout(() => { msgContainer.scrollTop = msgContainer.scrollHeight; }, 50); }
