@@ -1,7 +1,10 @@
+// --- IMPORTS FOR REALTIME DATABASE ---
 import { initializeApp } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-app.js";
 import { getAuth, signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-auth.js";
-import { getDatabase, ref, set, push, onValue, serverTimestamp, query, orderByChild, update, onDisconnect } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-database.js";
+// Added: onChildAdded, onChildChanged, limitToLast, off
+import { getDatabase, ref, set, push, onValue, onChildAdded, onChildChanged, serverTimestamp, query, orderByChild, limitToLast, update, onDisconnect, off } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-database.js";
 
+// --- CONFIGURATION ---
 const firebaseConfig = {
   apiKey: "AIzaSyDKTmbeR8vxWOimsera1WmC6a5mZc_Ewkc",
   authDomain: "closeddoor-58ac5.firebaseapp.com",
@@ -17,6 +20,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getDatabase(app); 
 
+// --- DOM ELEMENTS ---
 const loginScreen = document.getElementById('login-screen');
 const loginBtn = document.getElementById('login-btn');
 const logoutBtn = document.getElementById('logout-btn');
@@ -28,12 +32,14 @@ const msgInput = document.getElementById('message-input');
 const msgContainer = document.getElementById('messages-container');
 const notifySound = document.getElementById('notify-sound');
 
+// Header
 const headerAvatar = document.getElementById('header-avatar');
 const headerName = document.getElementById('header-name');
 const headerStatusContainer = document.getElementById('header-status-container');
 const headerStatus = document.getElementById('header-status');
 const typingIndicator = document.getElementById('typing-indicator');
 
+// Tools
 const emojiToggle = document.getElementById('emoji-toggle');
 const emojiPicker = document.getElementById('emoji-picker');
 const backBtn = document.getElementById('back-btn');
@@ -42,24 +48,36 @@ const replyText = document.getElementById('reply-text');
 const closeReplyBtn = document.getElementById('close-reply');
 const reactionMenu = document.getElementById('reaction-menu');
 
+// --- STATE ---
 let currentUser = null;
 let selectedUser = null;
-let messagesRef = null;
-let messagesListener = null;
-let typingListener = null;
-let presenceInterval = null;
-let isPageVisible = true;
-let replyTarget = null; 
+
+// Listener References (to stop listening when switching chats)
+let currentChatRef = null; 
+let currentTypingRef = null;
+let currentStatusRef = null;
+
 let typingTimeout = null;
 let lastDateRendered = null;
+let replyTarget = null; 
+let isPageVisible = true;
 
+// --- UI HELPERS ---
 backBtn.addEventListener('click', () => {
     document.body.classList.remove('mobile-chat-active');
     setTimeout(() => chatInterface.classList.add('hidden'), 300);
-    if (messagesRef) { }
+    detachChatListeners();
     selectedUser = null;
 });
 
+function detachChatListeners() {
+    // IMPORTANT: Stop listening to the previous chat so messages don't mix
+    if (currentChatRef) off(currentChatRef);
+    if (currentTypingRef) off(currentTypingRef);
+    if (currentStatusRef) off(currentStatusRef);
+}
+
+// Emoji & Menus
 emojiToggle.addEventListener('click', (e) => { e.stopPropagation(); emojiPicker.classList.toggle('hidden'); });
 document.querySelectorAll('.emoji-btn').forEach(btn => {
     btn.addEventListener('click', () => { msgInput.value += btn.textContent; msgInput.focus(); handleTyping(); });
@@ -69,6 +87,7 @@ document.addEventListener('click', (e) => {
     if (!reactionMenu.contains(e.target)) reactionMenu.classList.add('hidden');
 });
 
+// Reaction Logic
 document.querySelectorAll('#reaction-menu span').forEach(span => {
     span.addEventListener('click', async () => {
         const r = span.getAttribute('data-r');
@@ -82,6 +101,7 @@ document.querySelectorAll('#reaction-menu span').forEach(span => {
     });
 });
 
+// --- TYPING INDICATOR ---
 msgInput.addEventListener('input', handleTyping);
 
 function handleTyping() {
@@ -90,7 +110,6 @@ function handleTyping() {
     const myTypingRef = ref(db, `chats/${chatId}/typing/${currentUser.uid}`);
 
     set(myTypingRef, true);
-    
     clearTimeout(typingTimeout);
     typingTimeout = setTimeout(() => {
         set(myTypingRef, false);
@@ -98,9 +117,9 @@ function handleTyping() {
 }
 
 function listenForTyping(chatId) {
-    const partnerTypingRef = ref(db, `chats/${chatId}/typing/${selectedUser.uid}`);
+    currentTypingRef = ref(db, `chats/${chatId}/typing/${selectedUser.uid}`);
     
-    onValue(partnerTypingRef, (snapshot) => {
+    onValue(currentTypingRef, (snapshot) => {
         const isTyping = snapshot.val();
         if (isTyping) {
             headerStatusContainer.classList.add('typing-active');
@@ -113,6 +132,7 @@ function listenForTyping(chatId) {
     });
 }
 
+// --- REPLY ---
 function startReply(id, text, senderName) {
     replyTarget = { id, text, senderName };
     replyPreview.classList.remove('hidden');
@@ -121,6 +141,7 @@ function startReply(id, text, senderName) {
 }
 closeReplyBtn.addEventListener('click', () => { replyTarget = null; replyPreview.classList.add('hidden'); });
 
+// --- PRESENCE SYSTEM ---
 function setupPresence(user) {
     const userRef = ref(db, `users/${user.uid}`);
     update(userRef, {
@@ -137,20 +158,16 @@ function setupPresence(user) {
     onValue(connectedRef, (snap) => {
         if (snap.val() === true) {
             const con = push(myConnectionsRef);
-            
             onDisconnect(con).remove();
-            
             onDisconnect(lastOnlineRef).set(serverTimestamp());
-            
             set(con, true);
         }
     });
 }
 
 function monitorUserStatus(uid) {
-    const userConnectionsRef = ref(db, `users/${uid}/connections`);
-    
-    onValue(userConnectionsRef, (snap) => {
+    currentStatusRef = ref(db, `users/${uid}/connections`);
+    onValue(currentStatusRef, (snap) => {
         if (snap.exists()) {
             headerStatus.innerHTML = `<span class="status-dot" style="background:#ff5e9a"></span> Online`;
             headerStatus.style.color = "#ffebf3";
@@ -161,6 +178,7 @@ function monitorUserStatus(uid) {
     });
 }
 
+// --- VISIBILITY ---
 document.addEventListener("visibilitychange", () => {
     isPageVisible = document.visibilityState === 'visible';
     if (isPageVisible) document.title = "ClosedDoor";
@@ -170,6 +188,7 @@ function requestNotifyPermission() {
     if ("Notification" in window && Notification.permission !== "granted") Notification.requestPermission();
 }
 
+// --- AUTH ---
 loginBtn.addEventListener('click', async () => {
     try { await signInWithPopup(auth, new GoogleAuthProvider()); requestNotifyPermission(); } catch (e) { console.error(e); }
 });
@@ -195,21 +214,35 @@ onAuthStateChanged(auth, (user) => {
 function loadUsers() {
     const usersRef = ref(db, 'users');
     onValue(usersRef, (snapshot) => {
+        if (!snapshot.exists()) {
+            userListEl.innerHTML = '<div class="loading">No other users found yet.</div>';
+            return;
+        }
         userListEl.innerHTML = '';
+        let foundCount = 0;
         snapshot.forEach((childSnap) => {
             const user = childSnap.val();
-            if (user.uid !== currentUser.uid) {
+            if (user && user.uid !== currentUser.uid) {
+                foundCount++;
                 const div = document.createElement('div');
                 div.className = 'user-item';
-                div.innerHTML = `<img src="${user.photoURL}" class="user-avatar"><div class="user-info"><h4>${user.displayName}</h4><p>Tap to chat</p></div>`;
+                div.innerHTML = `
+                    <img src="${user.photoURL}" class="user-avatar">
+                    <div class="user-info"><h4>${user.displayName}</h4><p>Tap to chat</p></div>
+                `;
                 div.addEventListener('click', () => selectChat(user));
                 userListEl.appendChild(div);
             }
         });
+        if (foundCount === 0) {
+            userListEl.innerHTML = '<div class="loading">You are the only one here. Invite someone!</div>';
+        }
     });
 }
 
 function selectChat(user) {
+    detachChatListeners(); // Clean up old chat listeners
+
     selectedUser = user;
     emptyState.classList.add('hidden');
     chatInterface.classList.remove('hidden');
@@ -226,30 +259,44 @@ function selectChat(user) {
     loadMessages(chatId);
 }
 
-// --- LOAD MESSAGES (RTDB) ---
+// --- LOAD MESSAGES (OPTIMIZED FOR PERFORMANCE) ---
 function loadMessages(chatId) {
     msgContainer.innerHTML = '';
     lastDateRendered = null;
     
-    const chatMsgsRef = query(ref(db, `chats/${chatId}/messages`), orderByChild('timestamp'));
+    // LIMIT to last 500 messages to prevent browser lag on massive chats
+    currentChatRef = query(ref(db, `chats/${chatId}/messages`), orderByChild('timestamp'), limitToLast(500));
     
-    onValue(chatMsgsRef, (snapshot) => {
-        msgContainer.innerHTML = '';
-        lastDateRendered = null;
-        snapshot.forEach((childSnapshot) => {
-            const msg = childSnapshot.val();
-            const msgId = childSnapshot.key;
-            renderMessage(msg, msgId, chatId);
-            
-            if (msg.senderId !== currentUser.uid && msg.status !== 'seen' && isPageVisible) {
-                update(ref(db, `chats/${chatId}/messages/${msgId}`), { status: 'seen' });
-            }
-        });
+    // 1. onChildAdded: Handles new messages individually (INSTANT)
+    onChildAdded(currentChatRef, (snapshot) => {
+        const msg = snapshot.val();
+        const msgId = snapshot.key;
+        renderMessage(msg, msgId, chatId);
+        
+        // Scroll to bottom on new message
         scrollToBottom();
+
+        // Mark as seen if needed
+        if (msg.senderId !== currentUser.uid && msg.status !== 'seen' && isPageVisible) {
+            update(ref(db, `chats/${chatId}/messages/${msgId}`), { status: 'seen' });
+        }
+    });
+
+    // 2. onChildChanged: Handles updates (Reaction/Seen) without re-rendering list
+    onChildChanged(currentChatRef, (snapshot) => {
+        const msg = snapshot.val();
+        const msgId = snapshot.key;
+        
+        const existingMsgEl = document.getElementById(`msg-${msgId}`);
+        if (existingMsgEl) {
+            const newEl = createMessageElement(msg, msgId, chatId);
+            msgContainer.replaceChild(newEl, existingMsgEl);
+        }
     });
 }
 
 function renderMessage(msg, msgId, chatId) {
+    // Date Divider Check
     if (msg.timestamp) {
         const dateObj = new Date(msg.timestamp);
         const dateStr = dateObj.toDateString();
@@ -262,6 +309,12 @@ function renderMessage(msg, msgId, chatId) {
         }
     }
 
+    const el = createMessageElement(msg, msgId, chatId);
+    msgContainer.appendChild(el);
+}
+
+// Helper to create the DOM element
+function createMessageElement(msg, msgId, chatId) {
     const div = document.createElement('div');
     const isMe = msg.senderId === currentUser.uid;
     div.className = `message ${isMe ? 'sent' : 'received'}`;
@@ -291,6 +344,7 @@ function renderMessage(msg, msgId, chatId) {
         </div>
     `;
 
+    // Attach Listeners
     div.querySelector('.react-action').addEventListener('click', (e) => {
         e.stopPropagation();
         reactionMenu.classList.remove('hidden');
@@ -309,9 +363,10 @@ function renderMessage(msg, msgId, chatId) {
         update(ref(db, `chats/${chatId}/messages/${msgId}`), { reaction: emoji });
     });
 
-    msgContainer.appendChild(div);
+    return div;
 }
 
+// --- SEND MESSAGE ---
 msgForm.addEventListener('submit', async (e) => {
     e.preventDefault();
     const text = msgInput.value.trim();
@@ -319,6 +374,7 @@ msgForm.addEventListener('submit', async (e) => {
 
     const chatId = [currentUser.uid, selectedUser.uid].sort().join("_");
     
+    // Instant UI Reset
     msgInput.value = '';
     msgInput.focus();
     emojiPicker.classList.add('hidden');
@@ -330,6 +386,7 @@ msgForm.addEventListener('submit', async (e) => {
         replyPreview.classList.add('hidden');
     }
 
+    // Triggers onChildAdded instantly
     const newMsgRef = push(ref(db, `chats/${chatId}/messages`));
     await set(newMsgRef, {
         text: text,
