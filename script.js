@@ -24,7 +24,7 @@ const db = getDatabase(app);
 const messaging = getMessaging(app);
 
 // !!! IMPORTANT: REPLACE THIS WITH YOUR KEY FROM FIREBASE CONSOLE !!!
-const VAPID_KEY = "PASTE_YOUR_GENERATED_KEY_PAIR_HERE"; 
+const VAPID_KEY = "BFp2vO2DNgWDtUq4bFoBUwK0HOYaBW-SPaPDQ6io56C70_GVgfUGchmkB31mdtdwNBugcbx-bB67Fuwa-ZZZcWU"; 
 
 // --- DOM Elements ---
 const loginScreen = document.getElementById('login-screen');
